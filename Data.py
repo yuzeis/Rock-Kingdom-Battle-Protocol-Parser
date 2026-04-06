@@ -13,12 +13,12 @@
 
 """CSV 数据加载模块（精灵属性 / 精灵名 / 技能名）。
 
-对外接口与原版完全兼容，额外新增 get_maps() 懒加载单例，
-避免多次重复读取 CSV 文件。
+提供 get_maps() 线程安全的懒加载单例，避免多次重复读取 CSV 文件。
 """
 from __future__ import annotations
 
 import csv
+import threading
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -65,36 +65,36 @@ def _build_id_name_map(rows: list[dict[str, str]], *, id_field: str) -> dict[int
     return out
 
 
-# ---------------------------------------------------------------------------
-# 公开：按表加载（每次都重新读文件）
-# ---------------------------------------------------------------------------
-
-def load_attr_rows()  -> list[dict[str, str]]: return _read_rows(ATTR_CSV)
-def load_pet_rows()   -> list[dict[str, str]]: return _read_rows(PET_CSV)
-def load_skill_rows() -> list[dict[str, str]]: return _read_rows(SKILL_CSV)
-
-def load_attr_map()   -> dict[int, str]: return _build_id_name_map(load_attr_rows(),  id_field="attr_id")
-def load_pet_map()    -> dict[int, str]: return _build_id_name_map(load_pet_rows(),   id_field="pet_id")
-def load_skill_map()  -> dict[int, str]: return _build_id_name_map(load_skill_rows(), id_field="skill_id")
-
-def load_all_maps() -> dict[str, dict[int, str]]:
-    return {"attr": load_attr_map(), "pet": load_pet_map(), "skill": load_skill_map()}
+def _load_all_maps() -> dict[str, dict[int, str]]:
+    return {
+        "attr":  _build_id_name_map(_read_rows(ATTR_CSV),  id_field="attr_id"),
+        "pet":   _build_id_name_map(_read_rows(PET_CSV),   id_field="pet_id"),
+        "skill": _build_id_name_map(_read_rows(SKILL_CSV), id_field="skill_id"),
+    }
 
 
 # ---------------------------------------------------------------------------
-# 懒加载单例（推荐在主程序中使用）
+# 线程安全懒加载单例
 # ---------------------------------------------------------------------------
 
 _cache: dict[str, dict[int, str]] | None = None
+_lock = threading.Lock()
+
 
 def get_maps() -> dict[str, dict[int, str]]:
-    """首次调用时读取 CSV，后续直接返回缓存。"""
+    """首次调用时读取 CSV，后续直接返回缓存。线程安全。"""
     global _cache
-    if _cache is None:
-        _cache = load_all_maps()
-    return _cache
+    if _cache is not None:
+        return _cache
+    with _lock:
+        # Double-checked locking
+        if _cache is None:
+            _cache = _load_all_maps()
+        return _cache
+
 
 def invalidate_cache() -> None:
     """热重载 / 测试时调用，使下次 get_maps() 重新读取文件。"""
     global _cache
-    _cache = None
+    with _lock:
+        _cache = None

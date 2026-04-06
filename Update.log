@@ -1,0 +1,121 @@
+Rock Kingdom Battle Protocol Parser - Update Log
+
+[Ver1.1 - Urgewalt]
+Base Version: Ver1.0 - Morgendämmerung
+Date: 2026-04-06
+
+本文件记录 Ver1.0 到 Ver1.1 的实际代码改进，不是文档变更说明。
+
+1. 总体整理
+
+- 核心代码继续保留原有分层，但把入口、分析、协议提取、输出之间的职责拆得更清楚了。
+- 目录中新增 `Data\Attr.csv`、`Data\Pet.csv`、`Data\Skill.csv`，把名称映射数据独立出来，不再只靠代码内部处理。
+- 发布内容里不再带 `__pycache__` 这类缓存产物，版本目录更干净。
+
+2. `rkbpp_live_tools.py` 入口层改进
+
+- 原来三个子命令各自有一套运行函数，现在合并成统一的 `run_command()` 流程，减少重复逻辑。
+- 新增 `_COMMAND_CONFIG` 做命令配置表，把 `capture-key`、`live-decode`、`battle-analyze` 的差异集中管理。
+- 启动时会统一记录 `command`、`mode`、`iface`、`port`、`out_dir`、`csv` 等上下文信息，日志更完整。
+- 结束时的 summary 除了 `packets`、`key_hits`、`rows`，还会输出 `errors`，方便判断当前 key 或协议是否有问题。
+- 资源释放更稳了，`writer`、`csv_sink`、`session_logger` 都统一在 `finally` 中关闭。
+- 交互式模式里对 key 的读取和手工输入也做了整理，读取已有 `key.txt` 的流程更顺。
+
+3. `rkbpp_io.py` I/O 层改进
+
+- `SessionLogger` 从“每次写日志都重新 open 文件”改成“持久文件句柄”，避免频繁开关文件。
+- `SessionLogger` 新增 `close()`、上下文管理接口，生命周期更清楚。
+- `CsvSink` 从逐行强制 flush 改成批量 flush，默认每 50 行刷一次，写大 CSV 时性能更好。
+- `CsvSink` 也补了 `close()` 和上下文管理接口，资源释放更完整。
+
+4. `rkbpp_network.py` 网络层改进
+
+- 加入 `logging`，网络层内部的异常和缓冲问题终于能单独打日志了。
+- `load_key_from_file()` 现在同时支持“整行 key”以及 `key_hex=` / `key_ascii=` 两种格式，兼容性更好。
+- 新增 `_validate_be21_header()`，在切帧前先校验 `cmd`、`hdr_len`、`body_len` 合理性，减少假 magic 命中。
+- `parse_be21_from_buffer()` 对不完整帧的处理更稳，不会像以前那样更容易误切。
+- `DirectionState.feed()` 的重传检测从简单的 `(last_seq, last_payload)` 对比，改成基于 expected seq 的判断，重复包处理更合理。
+- 给方向缓冲区加了最大大小限制，超过阈值会截断前半部分，避免长时间跑下来 buffer 无限制膨胀。
+- 已解析前缀的回收逻辑更明确，长期运行时内存更稳。
+- `seen_acks` 从普通 `set` 改成有上限的 `_BoundedAckSet`，避免 key 去重集合无限增长。
+
+5. `rkbpp_analyzer.py` 分析层改进
+
+- 新增 opcode 注册表 `_OPCODE_REGISTRY` 和 inner message 注册表 `_INNER_REGISTRY`，不再是大段硬编码 `if/elif`。
+- 新增文本格式化注册表 `_FMT_REGISTRY`，摘要文字格式化不再和主流程混写。
+- 对已知消息的摘要入口做了系统化整理，当前接入的主要包括：
+  - `0x0102`
+  - `0x1316`
+  - `0x131A`
+  - `0x130B`
+  - `0x1322`
+  - `0x1324`
+  - `0x13F4`
+  - `0x130C`
+  - `0x1314`
+  - `0x01A9`
+  - `0x0220`
+- 对 `0x0414` inner message 的解析入口也统一注册，当前明确处理了：
+  - `390`
+  - `200`
+  - `51`
+  - `1`
+- 解密和解析过程拆成 `_build_base_row()`、`_parse_decrypted()`、`_record_error()` 等步骤，结构比 V1.0 清楚很多。
+- 新增连续错误计数、累计错误计数和阈值告警；连续解密/解析失败过多时，会明确提示“key 可能错了”或“协议可能变了”。
+- CSV 行数据的填充逻辑更集中，字段初始化更统一，后续继续扩字段时更容易维护。
+
+6. `rkbpp_proto.py` 协议提取层改进
+
+- `field_groups()` 新增缓存，重复访问同一个消息时不再每次都重新分组。
+- `parse_record()` 对 `c2s` 方向新增了无 `0x3963` magic 的兜底解析路径，并带 debug 日志，兼容了一类非标准包形态。
+- 新增 `_extract_actor_target()` 这类公共辅助函数，把很多重复提取逻辑收口了。
+- `0x01A9` 的提取逻辑从 `rkbpp_analyzer.py` 挪回 `rkbpp_proto.py`，协议语义归位到解析层。
+- `0x1324` 的事件提取做得更细，能区分并整理：
+  - 技能释放
+  - 伤害结算
+  - 状态施加
+  - 状态阶段变化
+  - 击杀 / 退场
+  - 效果关联
+- `0x13F4` 的刷新包提取更完整，技能列表、能量变化和动作识别都更稳。
+- 加入了“能量回满且本次有正增量 -> 能量瓶”这类启发式判断。
+- 特殊动作识别表和相关辅助逻辑继续补全，愿力强化等行为的归因更接近实际战斗语义。
+- inner message 的细节提取补得更完整，`390`、`200`、`51`、`1` 这几个分支比 V1.0 更能直接拿来用。
+- 一些原先散在各处的提取逻辑被收回到 proto 层，模块边界比 V1.0 更清晰。
+
+7. `rkbpp_reporter.py` 实时输出层改进
+
+- 把原来依赖布尔量推进的开场逻辑改成显式状态机 `BattlePhase`，包含：
+  - `WAITING_PAIR`
+  - `WAITING_ROSTER`
+  - `ACTIVE`
+- 各类 handler 的签名做了统一，后续继续加事件时不用再特判参数形式。
+- 上游已经去重的 `wrappers` 不再在 reporter 里重复 dedupe，避免重复工作。
+- 开场判断逻辑更稳定，只有在配对信息和关键状态包都齐了以后才进入 `ACTIVE`。
+- `turn_control` 单独做了处理，不再混在匿名 lambda 里。
+- `action_resolve`、`special_refresh`、`action_ack` 这些输出分支整理后更清楚，控制台信息比 V1.0 更接近人直接读的格式。
+- ACTIVE 阶段的快照输出触发条件也更明确，不会像以前那样更依赖隐式状态。
+
+8. `Data.py` 与数据映射改进
+
+- `Data.py` 不再走“每次调用就重新读 CSV”那套做法，而是改成线程安全的懒加载单例。
+- 新增锁和缓存失效逻辑，多处并发访问映射数据时更稳。
+- 映射数据拆分为独立 CSV 文件后，后面补宠物名、技能名、属性名时不用再直接改 Python 代码。
+
+9. Ver1.1 相比 Ver1.0 的核心变化总结
+
+- 不是单纯“能跑”，而是把运行主线进一步拆清楚了。
+- 不是只看得到原始字段，而是把战斗摘要、动作识别、状态变化提取得更靠近可读语义。
+- 不是只顾功能堆上去，而是明显补了长期运行时的稳定性问题，包括：
+  - 缓冲区膨胀
+  - 假帧命中
+  - 重传包处理
+  - ack 去重集合无限增长
+  - 解密失败无告警
+  - 日志/CSV 频繁 flush
+
+10. 结论
+
+- Ver1.0 更像是先把链路打通。
+- Ver1.1 则是在这个基础上补了结构化、稳定性、可维护性和战斗语义提取。
+- 如果说 Ver1.0 的重点是“先能抓、能解、能看”，那 Ver1.1 的重点就是“让这套东西更适合长期继续补”。

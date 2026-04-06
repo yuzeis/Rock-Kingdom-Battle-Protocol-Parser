@@ -2,7 +2,7 @@
 
 **项目名称：** Rock Kingdom Battle Protocol Parser  
 **项目简称：** RKBPP  
-**版本：** Rock Kingdom Battle Protocol Parser-Ver1.0(Morgendämmerung)
+**版本：** Rock Kingdom Battle Protocol Parser-Ver1.1(Urgewalt)
 
 ---
 
@@ -12,7 +12,7 @@ RKBPP（洛克王国战斗协议解析器）是一个用于学习、研究和分
 
 本项目旨在为协议研究、数据结构理解、网络数据分析、教学示例与互操作性研究提供一个可审阅、可修改、可复现的参考实现。
 
-Ver1.0版本为作者在闲暇时间Vibe Coding的衍生物，不对该版本的稳定性做任何担保。
+Ver1.1版本为作者在闲暇时间Vibe Coding的衍生物，不对该版本的稳定性做任何担保。
 
 假如你认可并且支持作者，请点个Star，感谢~
 
@@ -145,4 +145,3 @@ Ver1.0版本为作者在闲暇时间Vibe Coding的衍生物，不对该版本的
 ## 作者
 
 **花吹雪又一年**
-

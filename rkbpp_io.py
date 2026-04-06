@@ -33,23 +33,39 @@ def now_stamp() -> str: return dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
 # ---------------------------------------------------------------------------
-# SessionLogger：同步写屏幕 + 文件
+# SessionLogger：持久文件句柄，同步写屏幕 + 文件
 # ---------------------------------------------------------------------------
 
 class SessionLogger:
+    """日志同时输出到屏幕和文件。使用持久文件句柄避免频繁 open/close。"""
+
     def __init__(self, log_path: Path) -> None:
         self.log_path = log_path
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._fp = log_path.open("a", encoding="utf-8")
 
     def log(self, message: str) -> None:
         line = f"[{now_text()}] {message}"
         print(line, flush=True)
-        with self.log_path.open("a", encoding="utf-8") as fp:
-            fp.write(line + "\n")
+        self._fp.write(line + "\n")
+        self._fp.flush()
+
+    def close(self) -> None:
+        if self._fp and not self._fp.closed:
+            self._fp.close()
+
+    def __enter__(self) -> SessionLogger:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
 
 
 # ---------------------------------------------------------------------------
-# CsvSink：逐行写入 CSV
+# CsvSink：批量刷新写入 CSV
 # ---------------------------------------------------------------------------
+
+_FLUSH_INTERVAL = 50  # 每 N 行刷新一次
 
 class CsvSink:
     FIELDS: list[str] = [
@@ -70,17 +86,29 @@ class CsvSink:
     def __init__(self, csv_path: Path) -> None:
         self.csv_path = csv_path
         csv_path.parent.mkdir(parents=True, exist_ok=True)
-        self.fp = csv_path.open("w", encoding="utf-8-sig", newline="")
-        self.writer = csv.DictWriter(self.fp, fieldnames=self.FIELDS)
-        self.writer.writeheader()
-        self.fp.flush()
+        self._fp = csv_path.open("w", encoding="utf-8-sig", newline="")
+        self._writer = csv.DictWriter(self._fp, fieldnames=self.FIELDS)
+        self._writer.writeheader()
+        self._fp.flush()
+        self._rows_since_flush = 0
 
     def write_row(self, row: dict[str, Any]) -> None:
-        self.writer.writerow({f: row.get(f, "") for f in self.FIELDS})
-        self.fp.flush()
+        self._writer.writerow({f: row.get(f, "") for f in self.FIELDS})
+        self._rows_since_flush += 1
+        if self._rows_since_flush >= _FLUSH_INTERVAL:
+            self._fp.flush()
+            self._rows_since_flush = 0
 
     def close(self) -> None:
-        self.fp.close()
+        if self._fp and not self._fp.closed:
+            self._fp.flush()
+            self._fp.close()
+
+    def __enter__(self) -> CsvSink:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
 
 
 # ---------------------------------------------------------------------------
