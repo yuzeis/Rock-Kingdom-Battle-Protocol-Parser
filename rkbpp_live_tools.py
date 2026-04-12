@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-# Copyright (C) 2026 Yuzeis
+﻿#!/usr/bin/env python3
+# Copyright (C) 2026 花吹雪又一年
 #
 # This file is part of Rock Kingdom Battle Protocol Parser (RKBPP).
 # Licensed under the GNU Affero General Public License v3.0 only (AGPL-3.0-only).
@@ -32,6 +32,7 @@ from scapy.all import AsyncSniffer, PcapWriter  # type: ignore
 from rkbpp_analyzer import RkbppAnalyzer
 from rkbpp_io import CsvSink, SessionLogger, ensure_output_dir, iter_offline_packets, prompt_menu, prompt_text
 from rkbpp_network import list_ifaces, load_key_from_file, packet_has_target_port, parse_key_text, printable_ascii
+from rkbpp_relay import OpcodeRelayServer
 from rkbpp_reporter import BattleConsoleReporter
 
 DEFAULT_PORT = 8195
@@ -42,6 +43,7 @@ _COMMAND_CONFIG = {
     "capture-key":    ("rkbpp_key_capture",     False, False, True),
     "live-decode":    ("rkbpp_live_decode",      True,  False, False),
     "battle-analyze": ("rkbpp_battle_analyze",   True,  True,  False),
+    "opencode-server":("rkbpp_opencode_server",  True,  False, False),
 }
 
 
@@ -74,6 +76,15 @@ def _run_session(analyzer: RkbppAnalyzer, args: argparse.Namespace) -> None:
             pass
 
 
+class _MultiListener:
+    def __init__(self, *listeners) -> None:
+        self.listeners = [listener for listener in listeners if listener is not None]
+
+    def handle(self, row_index: int, row: dict, parsed_info: dict) -> None:
+        for listener in self.listeners:
+            listener.handle(row_index, row, parsed_info)
+
+
 # ---------------------------------------------------------------------------
 # 统一运行函数（合并原 run_capture_key / run_live_decode / run_battle_analyze）
 # ---------------------------------------------------------------------------
@@ -93,6 +104,7 @@ def run_command(args: argparse.Namespace) -> int:
     csv_sink: CsvSink | None = None
     writer: PcapWriter | None = None
     reporter: BattleConsoleReporter | None = None
+    relay: OpcodeRelayServer | None = None
 
     try:
         if needs_csv:
@@ -110,18 +122,29 @@ def run_command(args: argparse.Namespace) -> int:
         if needs_reporter:
             reporter = BattleConsoleReporter(logger=session_logger)
 
+        if command == "opencode-server":
+            relay = OpcodeRelayServer(
+                host=getattr(args, "relay_host", "127.0.0.1"),
+                port=getattr(args, "relay_port", 8765),
+                history_size=getattr(args, "relay_history", 500),
+                logger=session_logger,
+            )
+            relay.start()
+
+        listener = _MultiListener(reporter, relay)
+
         analyzer = RkbppAnalyzer(
             port=args.port, logger=session_logger, writer=writer,
             key_file=out_dir / "key.txt", csv_sink=csv_sink,
             preset_key=preset_key, stop_after_key=stop_after_key,
-            analysis_listener=reporter,
+            analysis_listener=listener if listener.listeners else None,
         )
 
         mode = "offline" if args.read_pcap else "live"
         session_logger.log(
             f"[startup] command={command} mode={mode} iface={args.iface or '<default>'} "
             f"port={args.port} out_dir={out_dir}"
-            + (f" csv={csv_sink.csv_path}" if csv_sink else "")
+            + (f" csv={csv_sink.csv_path} opencode_csv={csv_sink.opcode_csv_path}" if csv_sink else "")
         )
 
         try:
@@ -131,7 +154,8 @@ def run_command(args: argparse.Namespace) -> int:
 
         session_logger.log(
             f"[summary] packets={analyzer.packet_count} key_hits={analyzer.key_hits} "
-            f"rows={analyzer.decoded_rows} errors={analyzer._total_errors}"
+            f"rows={analyzer.decoded_rows} errors={analyzer._total_errors} "
+            f"listener_errors={analyzer.listener_errors}"
         )
 
         # capture-key 模式：返回 0 表示找到 key，1 表示未找到
@@ -144,6 +168,8 @@ def run_command(args: argparse.Namespace) -> int:
             writer.close()
         if csv_sink:
             csv_sink.close()
+        if relay:
+            relay.close()
         session_logger.close()
 
 
@@ -181,8 +207,9 @@ def build_interactive_args() -> argparse.Namespace:
                 print(f"秘钥格式错误: {e}")
     return argparse.Namespace(
         **vars(base),
-        command="battle-analyze" if choice == "3" else "live-decode",
+        command="battle-analyze" if choice == "3" else ("opencode-server" if choice == "4" else "live-decode"),
         csv_out=None, key=key,
+        relay_host="127.0.0.1", relay_port=8765, relay_history=500,
     )
 
 
@@ -221,6 +248,14 @@ def build_parser() -> argparse.ArgumentParser:
     _common(battle)
     _key_arg(battle)
     _csv_arg(battle)
+
+    relay = sub.add_parser("opencode-server", help="解析 opencode 并通过本地 HTTP NDJSON relay 提供给其他程序")
+    _common(relay)
+    _key_arg(relay)
+    _csv_arg(relay)
+    relay.add_argument("--relay-host", default="127.0.0.1")
+    relay.add_argument("--relay-port", type=int, default=8765)
+    relay.add_argument("--relay-history", type=int, default=500)
 
     return parser
 

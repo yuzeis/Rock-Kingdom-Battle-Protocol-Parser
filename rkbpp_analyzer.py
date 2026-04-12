@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-# Copyright (C) 2026 Yuzeis
+﻿#!/usr/bin/env python3
+# Copyright (C) 2026 花吹雪又一年
 #
 # This file is part of Rock Kingdom Battle Protocol Parser (RKBPP).
 # Licensed under the GNU Affero General Public License v3.0 only (AGPL-3.0-only).
@@ -25,6 +25,7 @@ from typing import Any, Callable
 from scapy.all import PcapWriter, TCP  # type: ignore
 
 import rkbpp_proto as proto
+import rkbpp_analysis as analysis
 from rkbpp_io import CsvSink, SessionLogger, now_text
 from rkbpp_network import (Be21Packet, FlowState,
                            decrypt_4013_body, flow_key_from_packet,
@@ -66,14 +67,6 @@ def _register_inner(message_id: int, kind: str):
 def _summarize_0102(record, _inner):
     return {"metadata": proto.extract_0102_metadata(record), "creatures": proto.extract_0102_creatures(record)}
 
-@_register_opcode(0x1316, "state_update")
-def _summarize_1316(record, _inner):
-    return {"wrappers": proto.extract_state_wrappers_from_record(record)}
-
-@_register_opcode(0x131A, "state_update")
-def _summarize_131a(record, _inner):
-    return {"wrappers": proto.extract_state_wrappers_from_record(record)}
-
 @_register_opcode(0x130B, "client_skill_select")
 def _summarize_130b(record, _inner):
     return {"detail": proto.extract_130b_skill_select(record)}
@@ -94,10 +87,6 @@ def _summarize_13f4(record, _inner):
 def _summarize_130c(record, _inner):
     return {"detail": proto.extract_130c_result(record)}
 
-@_register_opcode(0x1314, "turn_control")
-def _summarize_1314(record, _inner):
-    return {"detail": proto.extract_1314_phase(record)}
-
 @_register_opcode(0x01A9, "client_action")
 def _summarize_01a9(record, _inner):
     return {"detail": proto.extract_01a9_action(record)}
@@ -105,6 +94,52 @@ def _summarize_01a9(record, _inner):
 @_register_opcode(0x0220, "snapshot_handle")
 def _summarize_0220(record, _inner):
     return {"handle": proto.extract_0220_handle(record)}
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 新增：全量战斗 opcode 注册
+# ---------------------------------------------------------------------------
+
+# --- 第一批：核心战斗流程（增强 + 新增） ---
+
+@_register_opcode(0x1316, "battle_enter")
+def _summarize_1316_v2(record, _inner):
+    return {"detail": proto.extract_1316_enter(record)}
+
+@_register_opcode(0x131A, "round_start")
+def _summarize_131a_v2(record, _inner):
+    return {"detail": proto.extract_131a_round_start(record)}
+
+@_register_opcode(0x132C, "battle_finish")
+def _summarize_132c(record, _inner):
+    return {"detail": proto.extract_132c_finish(record)}
+
+@_register_opcode(0x13FC, "pvp_perform")
+def _summarize_13fc(record, _inner):
+    return {"detail": proto.extract_13fc_pvp_perform(record)}
+
+@_register_opcode(0x13F3, "preplay")
+def _summarize_13f3(record, _inner):
+    return {"detail": proto.extract_13f3_preplay(record)}
+
+@_register_opcode(0x1312, "round_flow")
+def _summarize_1312(record, _inner):
+    return {"detail": proto.extract_1312_round_flow(record)}
+
+
+# Keep hardcoded opcode handling only where it adds semantics beyond schema
+# field-name translation. Other simple handlers fall back to
+# opcode.json/proto_schema.json, including raw field dumps when schema is absent.
+_SEMANTIC_OVERRIDE_OPCODES = {
+    0x0102, 0x01A9, 0x0220,
+    0x130B, 0x130C, 0x1312, 0x1316, 0x131A,
+    0x1322, 0x1324, 0x132C,
+    0x13F3, 0x13F4, 0x13FC,
+}
+_OPCODE_REGISTRY = {
+    op: entry for op, entry in _OPCODE_REGISTRY.items()
+    if op in _SEMANTIC_OVERRIDE_OPCODES
+}
 
 
 @_register_inner(390, "inner390_pair")
@@ -135,6 +170,82 @@ def _register_fmt(kind: str):
         _FMT_REGISTRY[kind] = func
         return func
     return decorator
+
+
+def _public_json(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(k): _public_json(v)
+            for k, v in value.items()
+            if not str(k).startswith("_")
+        }
+    if isinstance(value, list):
+        return [_public_json(v) for v in value]
+    return value
+
+
+def _compact_summary_value(value: Any, *, max_items: int = 4, max_text: int = 80) -> Any:
+    if isinstance(value, dict):
+        compact: dict[str, Any] = {}
+        for idx, (key, item) in enumerate(value.items()):
+            if idx >= max_items:
+                compact["..."] = f"+{len(value) - max_items} fields"
+                break
+            compact[str(key)] = _compact_summary_value(item, max_items=max_items, max_text=max_text)
+        return compact
+    if isinstance(value, list):
+        items = [_compact_summary_value(item, max_items=max_items, max_text=max_text) for item in value[:max_items]]
+        if len(value) > max_items:
+            items.append(f"+{len(value) - max_items} items")
+        return items
+    if isinstance(value, str) and len(value) > max_text:
+        return value[:max_text] + f"...({len(value)} chars)"
+    return value
+
+
+def _schema_inline_parts(decoded: dict[str, Any], *, max_parts: int = 4) -> list[str]:
+    parts: list[str] = []
+    for key, value in decoded.items():
+        if len(parts) >= max_parts:
+            break
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            parts.append(f"{key}={value}")
+            continue
+        if isinstance(value, dict):
+            nested_scalars = [
+                f"{sub_key}={sub_value}"
+                for sub_key, sub_value in value.items()
+                if isinstance(sub_value, (str, int, float, bool)) or sub_value is None
+            ]
+            if nested_scalars:
+                parts.append(f"{key}:" + ",".join(nested_scalars[:2]))
+            continue
+        if isinstance(value, list):
+            for idx, item in enumerate(value[:2]):
+                if len(parts) >= max_parts:
+                    break
+                if isinstance(item, dict) and len(item) == 1:
+                    sub_key = next(iter(item))
+                    parts.append(f"{key}[{idx}]={sub_key}")
+    return parts
+
+
+def _schema_summary(record: dict[str, Any]) -> dict[str, Any]:
+    op = int(record.get("opcode", 0))
+    info = analysis.lookup_opcode(op) or {}
+    decoded = record.get("_decoded")
+    if not isinstance(decoded, dict):
+        decoded = {}
+    return {
+        "opcode_hex": record.get("opcode_hex"),
+        "opcode_name": info.get("name") or analysis.opcode_name(op),
+        "opcode_desc": info.get("desc_cn", ""),
+        "message": record.get("_message_name") or info.get("full_name") or info.get("name") or "",
+        "schema_found": bool(record.get("_schema_found")),
+        "schema_fields": list(decoded.keys()),
+        "decoded": decoded,
+        "decoded_preview": _compact_summary_value(decoded),
+    }
 
 
 def _fmt_action_or_skill(d: dict[str, Any]) -> str:
@@ -225,10 +336,6 @@ def _fmt_action_ack(so):
         parts.append(f"wrappers={len(d['state_wrappers'])}")
     return " | ".join(parts) if parts else "0x130C"
 
-@_register_fmt("turn_control")
-def _fmt_turn_control(so):
-    return f"phase_code={(so.get('detail') or {}).get('phase_code')}"
-
 @_register_fmt("inner390_pair")
 def _fmt_inner390(so):
     d = so.get("detail") or {}
@@ -265,6 +372,94 @@ def _fmt_snapshot_handle(so):
 
 
 # ---------------------------------------------------------------------------
+# Phase 3 新增格式化器
+# ---------------------------------------------------------------------------
+
+@_register_fmt("battle_enter")
+def _fmt_battle_enter(so):
+    d = so.get("detail") or {}
+    parts = [f"mode={d.get('battle_mode')}"]
+    if d.get("battle_id"):
+        parts.append(f"battle_id={d.get('battle_id')}")
+    if d.get("round"):
+        parts.append(f"round={d.get('round')}")
+    if d.get("max_round"):
+        parts.append(f"max_round={d.get('max_round')}")
+    if d.get("weather_id"):
+        parts.append(f"weather={d.get('weather_id')}")
+    if d.get("is_reconnect"):
+        parts.append("reconnect=1")
+    ws = d.get("wrappers") or []
+    if ws:
+        parts.append(f"wrappers={len(ws)}")
+    return " | ".join(parts)
+
+@_register_fmt("round_start")
+def _fmt_round_start(so):
+    d = so.get("detail") or {}
+    parts = [f"state_type={d.get('state_type')}"]
+    if d.get("round"):
+        parts.append(f"round={d.get('round')}")
+    if d.get("series_index"):
+        parts.append(f"series={d.get('series_index')}")
+    if d.get("has_perform"):
+        parts.append("has_perform=1")
+    ws = d.get("wrappers") or []
+    if ws:
+        names = [f"{w.get('name')}:{w.get('current_hp')}/{w.get('battle_max_hp')}"
+                 for w in ws[:4] if w.get("current_hp") is not None]
+        if names:
+            parts.append("; ".join(names))
+    return " | ".join(parts)
+
+@_register_fmt("battle_finish")
+def _fmt_battle_finish(so):
+    d = so.get("detail") or {}
+    parts = []
+    rn = d.get("result_name")
+    if rn:
+        parts.append(f"result={rn}")
+    elif d.get("result_code") is not None:
+        parts.append(f"result_code={d.get('result_code')}")
+    if d.get("rounds"):
+        parts.append(f"rounds={d.get('rounds')}")
+    if d.get("seconds"):
+        parts.append(f"time={d.get('seconds')}s")
+    if d.get("is_surrender"):
+        parts.append("surrender=1")
+    if d.get("pvp_score"):
+        parts.append(f"pvp_score={d.get('pvp_score')}")
+    pets = d.get("finish_pet_infos") or []
+    if pets:
+        pet_strs = [f"hp={p.get('remain_hp')}/{p.get('battle_max_hp')}" for p in pets[:4]]
+        parts.append("pets=" + "; ".join(pet_strs))
+    return " | ".join(parts) if parts else "battle_finish"
+
+@_register_fmt("pvp_perform")
+@_register_fmt("preplay")
+def _fmt_perform_variant(so):
+    d = so.get("detail") or {}
+    ps = d.get("primary_skill") or {}
+    dm = d.get("damage_event") or {}
+    parts = []
+    if ps.get("skill_id"):
+        parts.append(f"skill={ps.get('skill_name') or '?'}({ps.get('skill_id')})")
+    if dm.get("damage"):
+        parts.append(f"damage={dm.get('damage')}")
+    if d.get("has_defeat"):
+        parts.append("defeat=1")
+    if d.get("packet_state") is not None:
+        parts.append(f"state={d.get('packet_state')}")
+    return " | ".join(parts) if parts else d.get("opcode_hex", "perform")
+
+@_register_fmt("round_flow")
+def _fmt_round_flow(so):
+    d = so.get("detail") or {}
+    ws = d.get("wrappers") or []
+    return f"wrappers={len(ws)}" if ws else "round_flow"
+
+
+# ---------------------------------------------------------------------------
 # Analyzer
 # ---------------------------------------------------------------------------
 
@@ -289,6 +484,7 @@ class RkbppAnalyzer:
         # 错误跟踪
         self._consecutive_errors = 0
         self._total_errors = 0
+        self.listener_errors = 0
         self._error_alerted = False
 
     # ------------------------------------------------------------------
@@ -336,6 +532,8 @@ class RkbppAnalyzer:
             if dedupe not in flow.seen_acks:
                 flow.seen_acks.add(dedupe)
                 flow.key = key
+                self._consecutive_errors = 0
+                self._error_alerted = False
                 self.key_hits += 1
                 write_key_file(self.key_file, key, flow.flow_id)
                 self.session_logger.log(
@@ -348,11 +546,29 @@ class RkbppAnalyzer:
         if self.csv_sink is not None or self.analysis_listener is not None:
             ri = self.decoded_rows
             row, parsed_info = self._decode_be21(flow, be21, packet, frame_no)
-            if self.analysis_listener and parsed_info:
-                self.analysis_listener.handle(ri, row, parsed_info)
+            self._notify_listener(ri, row, parsed_info, flow, be21)
             if self.csv_sink:
                 self.csv_sink.write_row(row)
             self.decoded_rows += 1
+
+    def _notify_listener(
+        self,
+        row_index: int,
+        row: dict[str, Any],
+        parsed_info: dict[str, Any] | None,
+        flow: FlowState,
+        be21: Be21Packet,
+    ) -> None:
+        if self.analysis_listener is None or parsed_info is None:
+            return
+        try:
+            self.analysis_listener.handle(row_index, row, parsed_info)
+        except Exception as exc:
+            self.listener_errors += 1
+            self.session_logger.log(
+                f"[listener_error] flow={flow.flow_id} seq={be21.seq} error={exc}"
+            )
+            logger.exception("analysis_listener failed for seq=%s", be21.seq)
 
     # ------------------------------------------------------------------
     # 解密 + 解析（改进的错误处理）
@@ -383,6 +599,9 @@ class RkbppAnalyzer:
 
         try:
             parsed_info = self._parse_decrypted(row, flow, be21, packet, frame_no, plain)
+            if parsed_info is None:
+                self._record_error(f"parse_unparsed:{row.get('decrypt_status')}", be21.seq)
+                return row, None
             self._consecutive_errors = 0  # 成功则重置连续错误计数
             return row, parsed_info
         except Exception as exc:
@@ -417,9 +636,11 @@ class RkbppAnalyzer:
             "key_ascii": printable_ascii(flow.key) if flow.key else "",
             **{k: "" for k in (
                 "decrypt_status", "iv_hex", "cipher_hex", "decrypted_body_hex",
-                "protocol_direction", "opcode", "opcode_hex", "subtype", "magic_hex",
+                "protocol_direction", "opcode", "opcode_hex", "opcode_name", "opcode_desc",
+                "subtype", "magic_hex",
                 "req_seq", "payload_len", "root_clean", "inner_message_id",
-                "summary_kind", "summary_text", "summary_json", "record_json", "root_json",
+                "summary_kind", "summary_text", "summary_json",
+                "decoded_json", "record_json", "root_json",
             )},
         }
 
@@ -448,6 +669,30 @@ class RkbppAnalyzer:
             "root_clean": record.get("root", {}).get("clean", ""),
         })
 
+        # schema-driven 解码（Mode 2 增强）
+        op = record.get("opcode")
+        op_info = analysis.lookup_opcode(op) if op else {}
+        row["opcode_name"] = op_info.get("name", "")
+        row["opcode_desc"] = op_info.get("desc_cn", "")
+
+        # schema decode: 用于 root_json 和 decoded_json
+        decoded_payload = None
+        decoded_available = False
+        try:
+            schema_result = analysis.decode_record(record)
+            if schema_result:
+                decoded_payload = schema_result.get("decoded")
+                decoded_available = "decoded" in schema_result
+                record["_schema_found"] = schema_result.get("schema_found", False)
+                record["_message_name"] = schema_result.get("message_name", "")
+        except Exception:
+            logger.debug("schema decode failed for opcode=%s seq=%s",
+                         record.get("opcode_hex"), be21.seq, exc_info=True)
+        decoded_str = json.dumps(decoded_payload, ensure_ascii=False) if decoded_available else ""
+        row["decoded_json"] = decoded_str
+        record["_decoded"] = decoded_payload if decoded_available else {}
+        record["_schema_decoded"] = decoded_available
+
         inner = None
         if record.get("opcode") == 0x0414:
             inner = proto.extract_inner_message(record["root"])
@@ -455,12 +700,16 @@ class RkbppAnalyzer:
                 row["inner_message_id"] = inner.get("message_id", "")
 
         sk, so = self._summarize(record, inner)
+        # root_json: 优先使用 schema 翻译（带字段名），fallback 到原始 field number
+        public_record = _public_json(dict(record))
+        public_root = _public_json(record.get("root"))
+        root_json_str = decoded_str or json.dumps(public_root, ensure_ascii=False)
         row.update({
             "summary_kind": sk,
             "summary_text": self._fmt_text(sk, so),
             "summary_json": json.dumps(so, ensure_ascii=False),
-            "record_json": json.dumps(dict(record), ensure_ascii=False),
-            "root_json": json.dumps(record.get("root"), ensure_ascii=False),
+            "record_json": json.dumps(public_record, ensure_ascii=False),
+            "root_json": root_json_str,
         })
         return {"record": record, "inner": inner, "summary_kind": sk, "summary_obj": so}
 
@@ -478,7 +727,10 @@ class RkbppAnalyzer:
             if entry:
                 kind, func = entry
                 return kind, func(inner)
-            return "inner_unknown", {"message_id": mid}
+            summary = _schema_summary(record)
+            if mid is not None:
+                summary["inner_message_id"] = mid
+            return "schema_decoded", summary
 
         # 其他 opcode 走主注册表
         entry = _OPCODE_REGISTRY.get(op)
@@ -486,10 +738,37 @@ class RkbppAnalyzer:
             kind, func = entry
             return kind, func(record, inner)
 
-        return "opcode_only", {"opcode_hex": record.get("opcode_hex")}
+        return "schema_decoded", _schema_summary(record)
 
     def _fmt_text(self, sk: str, so: dict[str, Any]) -> str:
         formatter = _FMT_REGISTRY.get(sk)
         if formatter:
             return formatter(so)
-        return so.get("opcode_hex", "") or sk
+        if sk == "schema_decoded":
+            parts = [so.get("opcode_hex") or sk]
+            name = so.get("opcode_name")
+            if name:
+                parts.append(name)
+            if not so.get("schema_found"):
+                parts.append("known_no_schema")
+            decoded = so.get("decoded")
+            if isinstance(decoded, dict):
+                inline_parts = _schema_inline_parts(decoded)
+                if inline_parts:
+                    parts.extend(inline_parts)
+                    return " | ".join(parts)
+            fields = so.get("schema_fields") or []
+            if fields:
+                parts.append("fields=" + ",".join(str(f) for f in fields[:8]))
+                if len(fields) > 8:
+                    parts.append(f"+{len(fields) - 8} fields")
+            return " | ".join(parts)
+        # Generic fallback for any unregistered summary kind.
+        parts = [so.get("opcode_hex") or sk]
+        name = so.get("opcode_name")
+        if name:
+            parts.append(name)
+        desc = so.get("opcode_desc")
+        if desc:
+            parts.append(desc)
+        return " | ".join(parts)

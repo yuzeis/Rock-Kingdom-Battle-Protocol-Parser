@@ -1,121 +1,327 @@
-Rock Kingdom Battle Protocol Parser - Update Log
+# RKBPP Update
 
-[Ver1.1 - Urgewalt]
-Base Version: Ver1.0 - Morgendämmerung
-Date: 2026-04-06
+## Ver1.2 - Zusammenhalt
 
-本文件记录 Ver1.0 到 Ver1.1 的实际代码改进，不是文档变更说明。
+Base Version: Ver1.1 - Urgewalt  
+Date: 2026-04-11
 
-1. 总体整理
+本文档记录 Ver1.1 到 Ver1.2 的实际代码变化，重点是架构调整、schema 路径落地、relay server 和最近一轮问题修复。
 
-- 核心代码继续保留原有分层，但把入口、分析、协议提取、输出之间的职责拆得更清楚了。
-- 目录中新增 `Data\Attr.csv`、`Data\Pet.csv`、`Data\Skill.csv`，把名称映射数据独立出来，不再只靠代码内部处理。
-- 发布内容里不再带 `__pycache__` 这类缓存产物，版本目录更干净。
+---
 
-2. `rkbpp_live_tools.py` 入口层改进
+## 1. 总体变化
 
-- 原来三个子命令各自有一套运行函数，现在合并成统一的 `run_command()` 流程，减少重复逻辑。
-- 新增 `_COMMAND_CONFIG` 做命令配置表，把 `capture-key`、`live-decode`、`battle-analyze` 的差异集中管理。
-- 启动时会统一记录 `command`、`mode`、`iface`、`port`、`out_dir`、`csv` 等上下文信息，日志更完整。
-- 结束时的 summary 除了 `packets`、`key_hits`、`rows`，还会输出 `errors`，方便判断当前 key 或协议是否有问题。
-- 资源释放更稳了，`writer`、`csv_sink`、`session_logger` 都统一在 `finally` 中关闭。
-- 交互式模式里对 key 的读取和手工输入也做了整理，读取已有 `key.txt` 的流程更顺。
+v1.1 的主结构仍然是“硬编码提取优先，schema 辅助”。  
+v1.2 则明确转向：
 
-3. `rkbpp_io.py` I/O 层改进
+- 少量高语义战斗包保留硬编码提取
+- 大量简单 opcode 改由 `opcode.json + proto_schema.json` 自动支持
+- analyzer 统一在 summary 层做 schema fallback
 
-- `SessionLogger` 从“每次写日志都重新 open 文件”改成“持久文件句柄”，避免频繁开关文件。
-- `SessionLogger` 新增 `close()`、上下文管理接口，生命周期更清楚。
-- `CsvSink` 从逐行强制 flush 改成批量 flush，默认每 50 行刷一次，写大 CSV 时性能更好。
-- `CsvSink` 也补了 `close()` 和上下文管理接口，资源释放更完整。
+这次版本更新的核心不是继续堆 opcode 提取函数，而是把“哪些必须手写、哪些应该交给 schema”这条边界真正落下来。
 
-4. `rkbpp_network.py` 网络层改进
+---
 
-- 加入 `logging`，网络层内部的异常和缓冲问题终于能单独打日志了。
-- `load_key_from_file()` 现在同时支持“整行 key”以及 `key_hex=` / `key_ascii=` 两种格式，兼容性更好。
-- 新增 `_validate_be21_header()`，在切帧前先校验 `cmd`、`hdr_len`、`body_len` 合理性，减少假 magic 命中。
-- `parse_be21_from_buffer()` 对不完整帧的处理更稳，不会像以前那样更容易误切。
-- `DirectionState.feed()` 的重传检测从简单的 `(last_seq, last_payload)` 对比，改成基于 expected seq 的判断，重复包处理更合理。
-- 给方向缓冲区加了最大大小限制，超过阈值会截断前半部分，避免长时间跑下来 buffer 无限制膨胀。
-- 已解析前缀的回收逻辑更明确，长期运行时内存更稳。
-- `seen_acks` 从普通 `set` 改成有上限的 `_BoundedAckSet`，避免 key 去重集合无限增长。
+## 2. 新增 schema-driven 解码主路
 
-5. `rkbpp_analyzer.py` 分析层改进
+### 2.1 新增 `rkbpp_analysis.py`
 
-- 新增 opcode 注册表 `_OPCODE_REGISTRY` 和 inner message 注册表 `_INNER_REGISTRY`，不再是大段硬编码 `if/elif`。
-- 新增文本格式化注册表 `_FMT_REGISTRY`，摘要文字格式化不再和主流程混写。
-- 对已知消息的摘要入口做了系统化整理，当前接入的主要包括：
-  - `0x0102`
-  - `0x1316`
-  - `0x131A`
-  - `0x130B`
-  - `0x1322`
-  - `0x1324`
-  - `0x13F4`
-  - `0x130C`
-  - `0x1314`
-  - `0x01A9`
-  - `0x0220`
-- 对 `0x0414` inner message 的解析入口也统一注册，当前明确处理了：
-  - `390`
-  - `200`
-  - `51`
-  - `1`
-- 解密和解析过程拆成 `_build_base_row()`、`_parse_decrypted()`、`_record_error()` 等步骤，结构比 V1.0 清楚很多。
-- 新增连续错误计数、累计错误计数和阈值告警；连续解密/解析失败过多时，会明确提示“key 可能错了”或“协议可能变了”。
-- CSV 行数据的填充逻辑更集中，字段初始化更统一，后续继续扩字段时更容易维护。
+Ver1.2 新增 schema 解码模块，负责：
 
-6. `rkbpp_proto.py` 协议提取层改进
+- 懒加载 `Data/opcode.json`
+- 懒加载 `Data/proto_schema.json`
+- 按 schema 把 field number 翻译成具名字典
+- 对已知宠物、技能、属性 id 做名称 enrichment
 
-- `field_groups()` 新增缓存，重复访问同一个消息时不再每次都重新分组。
-- `parse_record()` 对 `c2s` 方向新增了无 `0x3963` magic 的兜底解析路径，并带 debug 日志，兼容了一类非标准包形态。
-- 新增 `_extract_actor_target()` 这类公共辅助函数，把很多重复提取逻辑收口了。
-- `0x01A9` 的提取逻辑从 `rkbpp_analyzer.py` 挪回 `rkbpp_proto.py`，协议语义归位到解析层。
-- `0x1324` 的事件提取做得更细，能区分并整理：
-  - 技能释放
-  - 伤害结算
-  - 状态施加
-  - 状态阶段变化
-  - 击杀 / 退场
-  - 效果关联
-- `0x13F4` 的刷新包提取更完整，技能列表、能量变化和动作识别都更稳。
-- 加入了“能量回满且本次有正增量 -> 能量瓶”这类启发式判断。
-- 特殊动作识别表和相关辅助逻辑继续补全，愿力强化等行为的归因更接近实际战斗语义。
-- inner message 的细节提取补得更完整，`390`、`200`、`51`、`1` 这几个分支比 V1.0 更能直接拿来用。
-- 一些原先散在各处的提取逻辑被收回到 proto 层，模块边界比 V1.0 更清晰。
+当前数据规模：
 
-7. `rkbpp_reporter.py` 实时输出层改进
+- `opcode.json`：1497 条 opcode 元信息
+- `proto_schema.json`：3232 条 message 定义
+- `proto_schema.json`：915 条 enum 定义
 
-- 把原来依赖布尔量推进的开场逻辑改成显式状态机 `BattlePhase`，包含：
-  - `WAITING_PAIR`
-  - `WAITING_ROSTER`
-  - `ACTIVE`
-- 各类 handler 的签名做了统一，后续继续加事件时不用再特判参数形式。
-- 上游已经去重的 `wrappers` 不再在 reporter 里重复 dedupe，避免重复工作。
-- 开场判断逻辑更稳定，只有在配对信息和关键状态包都齐了以后才进入 `ACTIVE`。
-- `turn_control` 单独做了处理，不再混在匿名 lambda 里。
-- `action_resolve`、`special_refresh`、`action_ack` 这些输出分支整理后更清楚，控制台信息比 V1.0 更接近人直接读的格式。
-- ACTIVE 阶段的快照输出触发条件也更明确，不会像以前那样更依赖隐式状态。
+### 2.2 analyzer 接入 schema 结果
 
-8. `Data.py` 与数据映射改进
+`rkbpp_analyzer.py` 现在在解析 record 后，会先调用：
 
-- `Data.py` 不再走“每次调用就重新读 CSV”那套做法，而是改成线程安全的懒加载单例。
-- 新增锁和缓存失效逻辑，多处并发访问映射数据时更稳。
-- 映射数据拆分为独立 CSV 文件后，后面补宠物名、技能名、属性名时不用再直接改 Python 代码。
+- `analysis.lookup_opcode()`
+- `analysis.decode_record()`
 
-9. Ver1.1 相比 Ver1.0 的核心变化总结
+并把结果写入：
 
-- 不是单纯“能跑”，而是把运行主线进一步拆清楚了。
-- 不是只看得到原始字段，而是把战斗摘要、动作识别、状态变化提取得更靠近可读语义。
-- 不是只顾功能堆上去，而是明显补了长期运行时的稳定性问题，包括：
-  - 缓冲区膨胀
-  - 假帧命中
-  - 重传包处理
-  - ack 去重集合无限增长
-  - 解密失败无告警
-  - 日志/CSV 频繁 flush
+- `opcode_name`
+- `opcode_desc`
+- `decoded_json`
+- `root_json`
+- `record["_decoded"]`
+- `record["_schema_found"]`
+- `record["_message_name"]`
 
-10. 结论
+### 2.3 summary 统一 fallback
 
-- Ver1.0 更像是先把链路打通。
-- Ver1.1 则是在这个基础上补了结构化、稳定性、可维护性和战斗语义提取。
-- 如果说 Ver1.0 的重点是“先能抓、能解、能看”，那 Ver1.1 的重点就是“让这套东西更适合长期继续补”。
+Ver1.1 中，未注册 opcode 只能得到有限的原始结果。  
+Ver1.2 中，未命中硬编码注册时统一返回：
+
+- `summary_kind = "schema_decoded"`
+
+同时用 `_schema_summary()` 和 `_schema_inline_parts()` 自动生成摘要文本。
+
+---
+
+## 3. opcode 注册策略从“全硬编码”改为“语义 override 白名单”
+
+### 3.1 新增 `_SEMANTIC_OVERRIDE_OPCODES`
+
+Ver1.2 不再把所有支持的 opcode 都塞进 `_OPCODE_REGISTRY`。  
+现在只保留 14 个确实包含战斗语义推断价值的 opcode：
+
+- `0x0102`
+- `0x01A9`
+- `0x0220`
+- `0x130B`
+- `0x130C`
+- `0x1312`
+- `0x1316`
+- `0x131A`
+- `0x1322`
+- `0x1324`
+- `0x132C`
+- `0x13F3`
+- `0x13F4`
+- `0x13FC`
+
+### 3.2 删除大量低价值硬编码
+
+相较 v1.1，Ver1.2 删除了多类“只是把 field number 翻译成名字”的代码：
+
+- 纯翻译型 `extract_*`
+- 一行包装型 `_summarize_*`
+- 对应的 `_fmt_*`
+
+这些 opcode 现在直接由 schema 路径承担。
+
+这意味着新增一个普通 opcode 时，通常只需要补数据文件，不再需要改三处 Python 代码。
+
+---
+
+## 4. `0x0414` inner dispatch 行为修正
+
+### 4.1 v1.1 / 早期 v1.2 的问题
+
+`0x0414` 是 inner message 容器。  
+之前 summary 层的逻辑是：
+
+- 如果 `inner_message_id` 命中 `_INNER_REGISTRY`，走专用 handler
+- 如果没命中，直接返回 `inner_unknown`
+
+这导致大量其实已经被 schema 正确解码的 `0x0414` 包，在 CSV 里仍然表现为“未知 inner”。
+
+### 4.2 当前行为
+
+Ver1.2 已改成：
+
+- 命中 `390 / 200 / 51 / 1` 仍走专用 inner 语义提取
+- 未命中时，不再返回 `inner_unknown`
+- 直接回落到 `schema_decoded`
+- 同时保留 `inner_message_id`
+
+### 4.3 实测效果
+
+基于旧战斗抓包离线回放：
+
+- `inner_unknown`：`1665 -> 0`
+- `schema_decoded`：`172 -> 1837`
+
+已确认当前被 schema 正确覆盖的典型 inner 包包括：
+
+- `11` -> `client_move`
+- `35` -> `sync_player_status`
+- `173` -> `throw_catch_notify`
+- `31` -> `update_actor_logic_status`
+- `2` -> `actor_leave`
+
+这次修复的结论很明确：  
+问题不在 schema 本身，而在 dispatch 层之前把结果过早打成了 unknown。
+
+---
+
+## 5. Reporter 接入 schema fallback
+
+Ver1.1 的 reporter 主要依赖硬编码 summary kind。  
+Ver1.2 新增：
+
+- `self._schema_opcode_handlers`
+- `_schema_detail_for_opcode()`
+
+这样即使某些简单战斗 opcode 不再保留硬编码提取，只要 schema 能给出稳定字段，reporter 仍可输出事件。
+
+当前已桥接的 schema opcode 包括：
+
+- `0x1326`
+- `0x132A`
+- `0x132D`
+- `0x1334`
+- `0x133C`
+- `0x13F6`
+
+---
+
+## 6. 新增 relay server 与 opencode 输出
+
+### 6.1 新增 `rkbpp_relay.py`
+
+Ver1.2 增加本地 HTTP NDJSON relay server：
+
+- `GET /health`
+- `GET /latest`
+- `GET /events`
+
+用于把解析后的 opcode 事件推给本地前端或其他工具。
+
+### 6.2 CLI 新增 `opencode-server`
+
+`rkbpp_live_tools.py` 现在支持第四个命令：
+
+- `opencode-server`
+
+该模式会同时：
+
+- 抓包或离线回放
+- 输出 `decoded_packets.csv`
+- 输出 `opencode_summary.csv`
+- 启动本地 relay server
+
+### 6.3 提取公共摘要函数
+
+`CsvSink` 和 relay server 之前各自拼接 opcode 摘要。  
+Ver1.2 已抽成：
+
+- `rkbpp_io.build_opcode_summary()`
+
+统一输出：
+
+- `opencode`
+- `meaning`
+- `content`
+
+---
+
+## 7. 正确性修复
+
+### 7.1 `field_groups()` 缓存
+
+`rkbpp_proto.py` 中：
+
+- `field_groups()` 现在把分组结果缓存到 `msg["_groups"]`
+
+这修掉了同一消息被反复分组的热路径浪费，特别是 `0x1324` 这类多 entry 消息。
+
+### 7.2 proto 解析字段数上界
+
+`parse_proto_message()` 新增：
+
+- `max_fields=5000`
+
+避免异常 payload 导致 field 列表失控膨胀。
+
+### 7.3 连续错误计数修正
+
+`_parse_decrypted()` 返回 `None` 时：
+
+- 不再被当成“成功解析”
+- 会调用 `_record_error()`
+- 只有真正得到 `parsed_info` 时才重置连续错误计数
+
+### 7.4 key 更新时重置错误状态
+
+收到新的 `0x1002` key 后，会重置：
+
+- `_consecutive_errors`
+- `_error_alerted`
+
+避免之前“告警只触发一次，后续换 key 后不再恢复”的问题。
+
+### 7.5 `extract_130c_result()` 空结果修正
+
+现在只有真正提取到语义字段时才返回结果；  
+仅包含 `opcode/opcode_hex` 的空壳 dict 不再被误判为有效内容。
+
+### 7.6 `strip_tsf4g_padding()` 修正
+
+当前逻辑改为：
+
+- 继续兼容历史抓包中稳定出现的 `...tsf4g\x06`
+- 兼容 `...tsf4g\x01`
+- 同时拒绝过大的异常 pad 值，避免误截断正文
+
+实测旧抓包中命中的真实尾巴主要是：
+
+- `...tsf4g\x06`
+
+因此这里仍然保留了对 TSF4G 历史尾巴格式的兼容，而不是强行改成纯 PKCS7 逻辑。
+
+---
+
+## 8. 文本摘要改进
+
+schema fallback 的 `summary_text` 现在不只是列字段名。  
+`_schema_inline_parts()` 会尝试直接内联简单标量字段，例如：
+
+- `player_uin=12345`
+- `reason=1`
+
+对于 `0x0414` 这类带 `acts` 数组的消息，还会显示：
+
+- `acts[0]=client_move`
+- `acts[0]=sync_player_status`
+
+这样在不展开完整 `decoded_json` 的情况下，也能快速判断 scene 内层动作类型。
+
+---
+
+## 9. 测试
+
+Ver1.2 新增了最小回归测试集，当前覆盖：
+
+- semantic override 白名单
+- 未注册 opcode 的 schema fallback
+- schema 文本摘要
+- `0x0414` unknown inner fallback
+- key 更新后的错误状态重置
+- `strip_tsf4g_padding` 边界
+- `extract_130c_result` 空结果返回
+
+当前测试目录：
+
+- [tests/test_analyzer_dispatch.py](./tests/test_analyzer_dispatch.py)
+- [tests/test_proto_guards.py](./tests/test_proto_guards.py)
+
+---
+
+## 10. 验证结果
+
+用 2026-04-11 的历史战斗抓包离线回放，当前结果为：
+
+- `packets = 3104`
+- `rows = 1962`
+- `errors = 0`
+- `listener_errors = 0`
+
+并且：
+
+- `battle-analyze` 与 `live-decode` 的核心输出逐行一致
+- `0x0414` 的未知 inner 不再堆积
+- battle parser 仍能正常输出开场、回合、动作、战斗结束
+
+---
+
+## 11. 相比 Ver1.1 的核心结论
+
+如果说 Ver1.1 的重点是：
+
+- 把抓包、重组、解密、战斗摘要这条链路做稳
+
+那么 Ver1.2 的重点就是：
+
+- 把协议支持方式从“继续堆硬编码函数”切换到“schema 主路 + 语义 override”
+
+这使得后续维护成本明显下降，也让大量新 opcode 的接入不再需要重复写低价值胶水代码。

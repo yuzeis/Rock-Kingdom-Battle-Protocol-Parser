@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-# Copyright (C) 2026 Yuzeis
+﻿#!/usr/bin/env python3
+# Copyright (C) 2026 花吹雪又一年
 #
 # This file is part of Rock Kingdom Battle Protocol Parser (RKBPP).
 # Licensed under the GNU Affero General Public License v3.0 only (AGPL-3.0-only).
@@ -37,6 +37,30 @@ class BattleConsoleReporter:
         self.opening_131a:    list[dict[str, Any]] | None = None
         self.active_friendly_slot: int | None = None
         self.active_enemy_slot:    int | None = None
+        self._handlers = {
+            "inner390_pair":       self._on_inner390,
+            "battle_enter":        self._on_battle_enter,
+            "round_start":         self._on_round_start,
+            "client_skill_select": self._on_skill_select,
+            "server_skill_declare":self._on_skill_declare,
+            "action_resolve":      self._on_action_resolve,
+            "pvp_perform":         self._on_action_resolve,
+            "preplay":             self._on_action_resolve,
+            "special_refresh":     self._on_special_refresh,
+            "server_action_ack":   self._on_action_ack,
+            "inner200_commit":     self._on_inner200,
+            "inner51_event":       self._on_inner51,
+            "battle_finish":       self._on_battle_finish,
+            "round_flow":          self._on_round_flow,
+        }
+        self._schema_opcode_handlers = {
+            0x1326: self._on_auto_cmd,
+            0x132A: self._on_role_leave,
+            0x132D: self._on_force_finish,
+            0x1334: self._on_emoji,
+            0x133C: self._on_catch_rsp,
+            0x13F6: self._on_ai_skill,
+        }
 
     # ------------------------------------------------------------------
     # 主入口（统一签名：所有 handler 接收 ri, record, summary_obj）
@@ -47,21 +71,41 @@ class BattleConsoleReporter:
         kind        = parsed_info["summary_kind"]
         summary_obj = parsed_info["summary_obj"]
 
-        _HANDLERS = {
-            "inner390_pair":       self._on_inner390,
-            "state_update":        self._on_state_update,
-            "client_skill_select": self._on_skill_select,
-            "server_skill_declare":self._on_skill_declare,
-            "action_resolve":      self._on_action_resolve,
-            "special_refresh":     self._on_special_refresh,
-            "server_action_ack":   self._on_action_ack,
-            "turn_control":        self._on_turn_control,
-            "inner200_commit":     self._on_inner200,
-            "inner51_event":       self._on_inner51,
-        }
-        handler = _HANDLERS.get(kind)
+        handler = self._handlers.get(kind)
         if handler:
             handler(row_index, record, summary_obj)
+            return
+
+        if kind != "schema_decoded":
+            return
+
+        opcode = int(record.get("opcode", 0) or 0)
+        schema_handler = self._schema_opcode_handlers.get(opcode)
+        if not schema_handler:
+            return
+        detail = self._schema_detail_for_opcode(opcode, record.get("_decoded"))
+        if detail is None:
+            return
+        schema_handler(row_index, record, {"detail": detail})
+
+    def _schema_detail_for_opcode(self, opcode: int, decoded: Any) -> dict[str, Any] | None:
+        if not isinstance(decoded, dict):
+            return None
+        detail = dict(decoded)
+        if opcode == 0x1326:
+            return {"auto_flag": detail.get("auto_flag", detail.get("field_1"))}
+        if opcode == 0x133C:
+            ret_info = detail.get("ret_info")
+            if isinstance(ret_info, dict) and "ret_code" not in detail:
+                detail["ret_code"] = ret_info.get("ret_code")
+            return detail
+        if opcode == 0x13F6:
+            skill_info = detail.get("skill_info")
+            if isinstance(skill_info, dict):
+                merged = dict(skill_info)
+                merged["pet_id"] = detail.get("pet_id")
+                return merged
+        return detail
 
     # ------------------------------------------------------------------
     # 事件处理（统一签名: ri, record, summary_obj）
@@ -83,17 +127,40 @@ class BattleConsoleReporter:
             en = (detail.get("enemy")   or {}).get("name") or ep
             self._emit(ri, f"首发对位建立: {fn} vs {en}")
 
-    def _on_state_update(self, ri: int, record: dict[str, Any], obj: dict[str, Any]) -> None:
-        # wrappers 已经在 extract_state_wrappers_from_record 中去重过了，这里不再重复去重
-        wrappers = obj.get("wrappers") or []
-        opcode   = int(record.get("opcode", 0))
-        if opcode == 0x1316 and self.opening_1316 is None:
+    def _on_battle_enter(self, ri: int, record: dict[str, Any], obj: dict[str, Any]) -> None:
+        """0x1316 BattleEnterNotify - 战斗进入通知。"""
+        d = obj.get("detail") or {}
+        wrappers = d.get("wrappers") or []
+        if self.opening_1316 is None:
             self.opening_1316 = wrappers
-        elif opcode == 0x131A:
-            if self.opening_131a is None and len(wrappers) >= 2:
-                self.opening_131a = wrappers
-            if self._phase == BattlePhase.ACTIVE:
-                self._emit_snapshot(ri, wrappers)
+        parts = ["战斗进入"]
+        if d.get("battle_mode") is not None:
+            parts.append(f"mode={d.get('battle_mode')}")
+        if d.get("battle_id"):
+            parts.append(f"battle_id={d.get('battle_id')}")
+        if d.get("max_round"):
+            parts.append(f"max_round={d.get('max_round')}")
+        if d.get("weather_id"):
+            parts.append(f"weather={d.get('weather_id')}")
+        if d.get("is_reconnect"):
+            parts.append("reconnect")
+        self._emit(ri, " | ".join(parts))
+        self._maybe_emit_battle_start(ri)
+
+    def _on_round_start(self, ri: int, record: dict[str, Any], obj: dict[str, Any]) -> None:
+        """0x131A BattleRoundStartNotify - 回合开始通知。"""
+        d = obj.get("detail") or {}
+        wrappers = d.get("wrappers") or []
+        if self.opening_131a is None and len(wrappers) >= 2:
+            self.opening_131a = wrappers
+        if self._phase == BattlePhase.ACTIVE:
+            parts = [f"回合开始: round={d.get('round')}"]
+            if d.get("state_type") is not None:
+                parts.append(f"state_type={d.get('state_type')}")
+            if d.get("series_index"):
+                parts.append(f"series={d.get('series_index')}")
+            self._emit(ri, " | ".join(parts))
+            self._emit_snapshot(ri, wrappers)
         self._maybe_emit_battle_start(ri)
 
     def _on_skill_select(self, ri: int, record: dict[str, Any], obj: dict[str, Any]) -> None:
@@ -137,10 +204,6 @@ class BattleConsoleReporter:
             parts += [f"实体={ws[0].get('name')}", f"技能={self._fmt_dynamic_skills(ws[0])}"]
         self._emit(ri, " | ".join(parts))
 
-    def _on_turn_control(self, ri: int, record: dict[str, Any], obj: dict[str, Any]) -> None:
-        d = obj.get("detail") or {}
-        self._emit(ri, f"回合控制包: phase_code={d.get('phase_code')}")
-
     def _on_inner200(self, ri: int, record: dict[str, Any], obj: dict[str, Any]) -> None:
         c = (obj.get("detail") or {}).get("commit") or {}
         self._emit(ri, f"commit: flag={c.get('flag')} code={c.get('code')} event_time_ms={c.get('event_time_ms')}")
@@ -148,6 +211,84 @@ class BattleConsoleReporter:
     def _on_inner51(self, ri: int, record: dict[str, Any], obj: dict[str, Any]) -> None:
         d = obj.get("detail") or {}
         self._emit(ri, f"inner51: kind={d.get('kind')} value2={d.get('value2')} value3={d.get('value3')}")
+
+    # --- Phase 3 新增 handler ---
+
+    def _on_battle_finish(self, ri: int, record: dict[str, Any], obj: dict[str, Any]) -> None:
+        """0x132C BattleFinishNotify - 战斗结算。"""
+        d = obj.get("detail") or {}
+        result = d.get("result_name") or f"code={d.get('result_code')}"
+        parts = [f"★ 战斗结束: {result}"]
+        if d.get("rounds"):
+            parts.append(f"回合数={d.get('rounds')}")
+        if d.get("seconds"):
+            parts.append(f"用时={d.get('seconds')}秒")
+        if d.get("is_surrender"):
+            parts.append("投降")
+        self._emit(ri, " | ".join(parts))
+        # 输出战后宠物状态
+        for p in (d.get("finish_pet_infos") or []):
+            self._emit(ri, f"  战后宠物: gid={p.get('pet_gid')} "
+                          f"HP={p.get('remain_hp')}/{p.get('battle_max_hp')} "
+                          f"能量={p.get('remain_energy')}")
+        # 重置战斗状态
+        self._phase = BattlePhase.WAITING_PAIR
+        self.opening_pair = None
+        self.opening_1316 = None
+        self.opening_131a = None
+        self.active_friendly_slot = None
+        self.active_enemy_slot    = None
+
+    def _on_force_finish(self, ri: int, record: dict[str, Any], obj: dict[str, Any]) -> None:
+        """0x132D BattleForceFinishNotify - 强制结束。"""
+        d = obj.get("detail") or {}
+        self._emit(ri, f"★ 战斗强制结束: reason={d.get('reason')}")
+        self._phase = BattlePhase.WAITING_PAIR
+        self.opening_pair = None
+        self.opening_1316 = None
+        self.opening_131a = None
+
+    def _on_ai_skill(self, ri: int, record: dict[str, Any], obj: dict[str, Any]) -> None:
+        """0x13F6 AiSelectSkillNotify - AI 选技能提示。"""
+        d = obj.get("detail") or {}
+        sname = d.get("skill_name") or d.get("skill_id")
+        self._emit(ri, f"AI技能提示: pet={d.get('pet_id')} skill={sname} "
+                      f"hint_level={d.get('hint_level')} cost={d.get('cost_energy')}")
+
+    def _on_role_leave(self, ri: int, record: dict[str, Any], obj: dict[str, Any]) -> None:
+        """0x132A RoleLeaveNotify - 角色离场。"""
+        d = obj.get("detail") or {}
+        self._emit(ri, f"角色离场: uin={d.get('player_uin')} reason={d.get('reason')}")
+
+    def _on_emoji(self, ri: int, record: dict[str, Any], obj: dict[str, Any]) -> None:
+        """0x1334 EmojiNotify - 战斗表情。"""
+        d = obj.get("detail") or {}
+        self._emit(ri, f"战斗表情: emoji={d.get('emoji')} "
+                      f"from={d.get('src_uin')} -> {d.get('aim_uin')}")
+
+    def _on_catch_rsp(self, ri: int, record: dict[str, Any], obj: dict[str, Any]) -> None:
+        """0x133C CatchConfirmRsp - 捕捉结果。"""
+        d = obj.get("detail") or {}
+        parts = [f"捕捉结果: ret={d.get('ret_code')}"]
+        if d.get("base_ball_num") is not None:
+            parts.append(f"剩余球={d.get('base_ball_num')}")
+        if d.get("boss_shiny"):
+            parts.append(f"闪光={d.get('boss_shiny')}")
+        self._emit(ri, " | ".join(parts))
+
+    def _on_auto_cmd(self, ri: int, record: dict[str, Any], obj: dict[str, Any]) -> None:
+        """0x1326 ChangeAutoCmdNotify - 自动战斗切换。"""
+        d = obj.get("detail") or {}
+        self._emit(ri, f"自动战斗切换: auto={d.get('auto_flag')}")
+
+    def _on_round_flow(self, ri: int, record: dict[str, Any], obj: dict[str, Any]) -> None:
+        """0x1312 RoundFlowNotify - 回合流通知。"""
+        d = obj.get("detail") or {}
+        ws = d.get("wrappers") or []
+        if ws:
+            self._emit(ri, f"回合流通知: wrappers={len(ws)}")
+            if self._phase == BattlePhase.ACTIVE:
+                self._emit_snapshot(ri, ws)
 
     # ------------------------------------------------------------------
     # 开场逻辑（使用显式状态机）

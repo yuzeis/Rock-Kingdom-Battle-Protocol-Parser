@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-# Copyright (C) 2026 Yuzeis
+﻿#!/usr/bin/env python3
+# Copyright (C) 2026 花吹雪又一年
 #
 # This file is part of Rock Kingdom Battle Protocol Parser (RKBPP).
 # Licensed under the GNU Affero General Public License v3.0 only (AGPL-3.0-only).
@@ -61,7 +61,13 @@ def strip_tsf4g_padding(data: bytes) -> bytes:
     marker = b"tsf4g"
     if data.rfind(marker) == len(data) - 6:
         pad = data[-1]
-        if 0 < pad <= len(data):
+        # 历史抓包中大量出现 "...tsf4g\\x06" 尾巴，需要兼容旧格式；
+        # 同时接受严格校验通过的标准 PKCS7，避免误删大量有效字节。
+        if pad == len(marker) + 1:
+            return data[:-pad]
+        if pad == 1:
+            return data[:-1]
+        if 0 < pad <= 16 and len(data) >= pad and all(b == pad for b in data[-pad:]):
             return data[:-pad]
     return data
 
@@ -70,10 +76,19 @@ def maybe_signed64(value: int) -> int:
     return value - (1 << 64) if value >= (1 << 63) else value
 
 
-def parse_proto_message(data: bytes, *, depth: int = 0, max_depth: int = 10) -> dict[str, Any]:
+def parse_proto_message(
+    data: bytes,
+    *,
+    depth: int = 0,
+    max_depth: int = 10,
+    max_fields: int = 5000,
+) -> dict[str, Any]:
     fields: list[dict[str, Any]] = []
     off, clean = 0, True
     while off < len(data):
+        if len(fields) >= max_fields:
+            clean = False
+            break
         start = off
         try:
             tag, off = read_varint(data, off)
@@ -104,7 +119,12 @@ def parse_proto_message(data: bytes, *, depth: int = 0, max_depth: int = 10) -> 
                 if text is not None:
                     entry["text"] = text
                 elif depth < max_depth and blob:
-                    sub = parse_proto_message(blob, depth=depth + 1, max_depth=max_depth)
+                    sub = parse_proto_message(
+                        blob,
+                        depth=depth + 1,
+                        max_depth=max_depth,
+                        max_fields=max_fields,
+                    )
                     if sub["fields"] and sub["consumed"] == len(blob):
                         entry["sub"] = sub
             elif wire_type == 5:
@@ -138,21 +158,18 @@ def walk_messages(msg: dict[str, Any], path: str = "root") -> list[tuple[str, di
 
 
 def field_groups(msg: dict[str, Any] | None) -> dict[int, list[dict[str, Any]]]:
-    """按 field number 分组。对同一 msg 多次调用时使用内部缓存。"""
+    """Group parse-tree fields by field number, cached per message."""
     if msg is None:
         return {}
-    # 检查缓存
-    cached = msg.get("_grouped")
-    if cached is not None:
+    cached = msg.get("_groups")
+    if isinstance(cached, dict):
         return cached
     grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for entry in msg["fields"]:
         grouped[entry["field"]].append(entry)
-    # 转为普通 dict 存入缓存
-    result = dict(grouped)
-    msg["_grouped"] = result
-    return result
-
+    cached = dict(grouped)
+    msg["_groups"] = cached
+    return cached
 
 def collect_varints(msg: dict[str, Any] | None, field_no: int) -> list[int]:
     return [e["value"] for e in field_groups(msg).get(field_no, []) if "value" in e]
@@ -222,7 +239,11 @@ def side_name(side_id: int | None) -> str | None:
 def summarize_types(type_ids: list[int] | None) -> list[str]:
     if not type_ids:
         return []
-    return [f"{type_name(t)}({t})" if type_name(t) else str(t) for t in type_ids]
+    out: list[str] = []
+    for type_id in type_ids:
+        name = type_name(type_id)
+        out.append(f"{name}({type_id})" if name else str(type_id))
+    return out
 
 
 # --- 公共辅助：提取 actor/target side ---
@@ -425,18 +446,25 @@ def parse_record(packet: dict[str, Any]) -> dict[str, Any] | None:
             "payload_len": len(payload),
             "root": parse_proto_message(payload) if payload else {"fields": [], "consumed": 0, "clean": True},
         }
-    # c2s 兜底：无 0x3963 magic 的简化格式（记录日志以便排查）
+    # c2s short heartbeat response: observed as fixed control bytes, opcode at offset 6,
+    # and tsf4g padding. Keep this intentionally narrow to avoid reviving the old fake fallback.
+    if packet["direction"] == "c2s" and len(body) >= 16 and body.find(b"tsf4g", 8) >= 0:
+        op = int.from_bytes(body[6:8], "big")
+        if op == 0x013E:
+            req_seq = int.from_bytes(body[14:16], "little")
+            return {
+                **common, "opcode": op, "opcode_hex": f"0x{op:04X}",
+                "format": "c2s_short_heartbeat", "req_seq": req_seq,
+                "payload_len": 0,
+                "root": {"fields": [], "consumed": 0, "clean": True},
+            }
+    # c2s ?????????????? record???????????
     if packet["direction"] == "c2s" and len(body) >= 8:
-        op = int.from_bytes(body[4:8], "big")
-        payload = strip_tsf4g_padding(body)
         logger.debug(
-            "c2s fallback parse: seq=%s opcode=0x%04X body_len=%d (no 0x3963 magic)",
-            packet["seq"], op, len(body),
+            "unsupported c2s frame without 0x3963 magic: seq=%s body_len=%d",
+            packet["seq"], len(body),
         )
-        return {
-            **common, "opcode": op, "opcode_hex": f"0x{op:04X}", "payload_len": len(payload),
-            "root": parse_proto_message(payload) if payload else {"fields": [], "consumed": 0, "clean": True},
-        }
+        return None
     return None
 
 
@@ -668,7 +696,10 @@ def extract_130c_result(record: dict[str, Any]) -> dict[str, Any] | None:
         if inferred:
             info["action_kind"] = "special_action"
             info["action_name"] = inferred
-    return info or None
+    semantic_keys = ("battle_token", "current_hp", "energy_after", "result_code",
+                     "skill_id", "skill_name", "skill_id_x100", "action_name",
+                     "action_kind", "state_wrappers")
+    return info if any(info.get(key) is not None for key in semantic_keys) else None
 
 
 def _extract_1324_entry(sub: dict[str, Any]) -> dict[str, Any]:
@@ -780,13 +811,6 @@ def extract_1324_action(record: dict[str, Any]) -> dict[str, Any] | None:
         "damage_event":  next((it for it in entries if it.get("kind") == "damage"), None),
         "effect_ids": effect_ids,
         "has_defeat": any(it.get("kind") == "defeat" for it in entries),
-        "opcode": record.get("opcode"), "opcode_hex": record.get("opcode_hex"),
-    }
-
-
-def extract_1314_phase(record: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "phase_code": pick_first(collect_varints(first_sub(field_groups(record["root"]).get(1, [])), 1), low=0, high=999),
         "opcode": record.get("opcode"), "opcode_hex": record.get("opcode_hex"),
     }
 
@@ -941,3 +965,182 @@ def extract_01a9_action(record: dict[str, Any]) -> dict[str, Any]:
             out["primary_id"] = int(ids[0])
         break
     return out
+
+
+# ===========================================================================
+# [3] Phase 3 新增战斗协议提取函数
+# ===========================================================================
+
+# --- 0x1316 BattleEnterNotify 增强 ---
+
+def extract_1316_enter(record: dict[str, Any]) -> dict[str, Any]:
+    """0x1316 (4886) BattleEnterNotify：战斗进入通知，提取 battle_mode/round/init 等。"""
+    root = record["root"]
+    rg = field_groups(root)
+    detail: dict[str, Any] = {
+        "battle_mode":       pick_first(collect_varints(root, 1)),
+        "round":             pick_first(collect_varints(root, 2)),
+        "series_index":      pick_first(collect_varints(root, 3)),
+        "round_time":        pick_first(collect_varints(root, 4)),
+        "npc_id":            pick_first(collect_varints(root, 9)),
+        "is_reconnect":      bool(pick_first(collect_varints(root, 10)) or 0),
+        "enter_battle_type": pick_first(collect_varints(root, 11)),
+        "weather_id":        pick_first(collect_varints(root, 13)),
+        "max_round":         pick_first(collect_varints(root, 15)),
+        "creater_uin":       pick_first(collect_varints(root, 17)),
+        "data_seq_num":      pick_first(collect_varints(root, 18)),
+    }
+    # init_info (field 6) 提取 battle_id
+    init_sub = first_sub(rg.get(6, []))
+    if init_sub:
+        detail["battle_id"]      = pick_first(collect_varints(init_sub, 1))
+        detail["battle_cfg_id"]  = pick_first(collect_varints(init_sub, 2))
+    # state wrappers
+    detail["wrappers"] = extract_state_wrappers_from_record(record)
+    return detail
+
+
+# --- 0x131A BattleRoundStartNotify 增强 ---
+
+def extract_131a_round_start(record: dict[str, Any]) -> dict[str, Any]:
+    """0x131A (4890) BattleRoundStartNotify：回合开始通知。"""
+    root = record["root"]
+    rg = field_groups(root)
+    detail: dict[str, Any] = {
+        "state_type":   pick_first(collect_varints(root, 1)),
+        "has_npc_delay": bool(pick_first(collect_varints(root, 5)) or 0),
+        "guide_id":     pick_first(collect_varints(root, 6)),
+    }
+    # state_info (field 2)
+    state_sub = first_sub(rg.get(2, []))
+    if state_sub:
+        detail["battle_id"]    = pick_first(collect_varints(state_sub, 1))
+        detail["round"]        = pick_first(collect_varints(state_sub, 2))
+        detail["series_index"] = pick_first(collect_varints(state_sub, 3))
+        detail["round_time"]   = pick_first(collect_varints(state_sub, 5))
+        detail["npc_escape"]   = pick_first(collect_varints(state_sub, 11))
+    # perform_cmd (field 3) — 有时回合开始自带 perform
+    pcmd = first_sub(rg.get(3, []))
+    if pcmd:
+        detail["has_perform"] = True
+        detail["is_battle_finished"] = bool(pick_first(collect_varints(pcmd, 1)) or 0)
+    # state wrappers
+    detail["wrappers"] = extract_state_wrappers_from_record(record)
+    return detail
+
+
+# --- 0x132C BattleFinishNotify ---
+
+BATTLE_RESULT_MAP: dict[int, str] = {
+    0: "NULL", 2: "WIN", 4: "LOSE", 10: "MONSTER_RUNAWAY", 12: "RUNAWAY",
+    260: "RUNAWAY_ROLE_MAGIC", 18: "WIN_DEFEAT", 34: "WIN_CATCH",
+    66: "WIN_HP", 68: "LOSE_HP", 132: "MONSTER_ESCAPE", 516: "MONSTER_ESCAPE2",
+}
+
+def extract_132c_finish(record: dict[str, Any]) -> dict[str, Any]:
+    """0x132C (4908) BattleFinishNotify：战斗结算通知。"""
+    root = record["root"]
+    rg = field_groups(root)
+    detail: dict[str, Any] = {
+        "evolution_complete": bool(pick_first(collect_varints(root, 7)) or 0),
+        "will_leave_visit":  bool(pick_first(collect_varints(root, 10)) or 0),
+        "pvp_score":         pick_first(collect_varints(root, 14)),
+    }
+    # settle_info (field 1)
+    settle = first_sub(rg.get(1, []))
+    if settle:
+        result_code = pick_first(collect_varints(settle, 6))
+        detail["result_code"]   = result_code
+        detail["result_name"]   = BATTLE_RESULT_MAP.get(result_code, f"UNKNOWN({result_code})") if result_code is not None else None
+        detail["battle_conf_type"]     = pick_first(collect_varints(settle, 1))
+        detail["battle_opposite_type"] = pick_first(collect_varints(settle, 2))
+        detail["battle_conf_id"]       = pick_first(collect_varints(settle, 7))
+        detail["is_surrender"]         = bool(pick_first(collect_varints(settle, 14)) or 0)
+        detail["battle_id"]            = pick_first(collect_varints(settle, 19))
+        detail["rounds"]               = pick_first(collect_varints(settle, 37))
+        detail["seconds"]              = pick_first(collect_varints(settle, 38))
+        detail["escape_style"]         = pick_first(collect_varints(settle, 10))
+    # seen_monster_id (field 3)
+    detail["seen_monster_ids"] = collect_varints(root, 3)
+    # ret_info (field 4)
+    ret = first_sub(rg.get(4, []))
+    if ret:
+        detail["ret_code"] = pick_first(collect_varints(ret, 1))
+        detail["ret_msg"]  = first_text(ret, 2)
+    # pet_info (field 8) — 战后宠物状态
+    pet_infos = []
+    for e in rg.get(8, []):
+        sub = e.get("sub")
+        if not sub:
+            continue
+        pet_infos.append({
+            "pet_gid":       pick_first(collect_varints(sub, 1)),
+            "remain_hp":     pick_first(collect_varints(sub, 2)),
+            "remain_energy": pick_first(collect_varints(sub, 3)),
+            "battle_max_hp": pick_first(collect_varints(sub, 5)),
+        })
+    if pet_infos:
+        detail["finish_pet_infos"] = pet_infos
+    return detail
+
+
+# --- 0x13FC PvpPerformStartNotify ---
+
+def extract_13fc_pvp_perform(record: dict[str, Any]) -> dict[str, Any] | None:
+    """0x13FC (5116) PvpPerformStartNotify：PVP 表演通知（结构同 1324）。"""
+    container = first_sub(field_groups(record["root"]).get(1, []))
+    if container is None:
+        return None
+    return _extract_perform_cmd(container, record)
+
+
+# --- 0x13F3 PrePlayNotify ---
+
+def extract_13f3_preplay(record: dict[str, Any]) -> dict[str, Any] | None:
+    """0x13F3 (5107) PrePlayNotify：预演通知（结构同 1324）。"""
+    container = first_sub(field_groups(record["root"]).get(1, []))
+    if container is None:
+        return None
+    return _extract_perform_cmd(container, record)
+
+
+# --- 共用 perform_cmd 提取（1324/13FC/13F3 共享） ---
+
+def _extract_perform_cmd(container: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
+    """从 BattlePerformCmd 容器中提取完整信息，供 1324/13FC/13F3 共用。"""
+    cg = field_groups(container)
+    entries = [_extract_1324_entry(e["sub"]) for e in cg.get(2, []) if e.get("sub")]
+    effect_ids = sorted({int(it["effect_id"]) for it in entries if it.get("effect_id") is not None})
+    packet_state = pick_first(collect_varints(container, 1))
+    packet_phase = pick_first(collect_varints(container, 3))
+    packet_index = pick_first(collect_varints(container, 5))
+    return {
+        "packet_state":       packet_state,
+        "packet_phase":       packet_phase,
+        "packet_index":       packet_index,
+        "entries":            entries,
+        "primary_skill":      next((it for it in entries if it.get("skill_id")), None),
+        "energy_event":       next((it for it in entries if it.get("kind") == "skill_cast"), None),
+        "damage_event":       next((it for it in entries if it.get("kind") == "damage"), None),
+        "effect_ids":         effect_ids,
+        "has_defeat":         any(it.get("kind") == "defeat" for it in entries),
+        "opcode":             record.get("opcode"),
+        "opcode_hex":         record.get("opcode_hex"),
+    }
+
+
+# --- 0x1312 RoundFlowNotify ---
+
+def extract_1312_round_flow(record: dict[str, Any]) -> dict[str, Any]:
+    """0x1312 (4882) RoundFlowNotify：回合流通知。"""
+    root = record["root"]
+    # 该消息 schema 缺失，尝试通用提取
+    detail: dict[str, Any] = {}
+    for fn in range(1, 10):
+        vals = collect_varints(root, fn)
+        if vals:
+            detail[f"field_{fn}"] = vals[0] if len(vals) == 1 else vals
+    detail["wrappers"] = extract_state_wrappers_from_record(record)
+    return detail
+
+

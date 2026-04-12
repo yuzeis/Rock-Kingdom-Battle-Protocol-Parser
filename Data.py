@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-# Copyright (C) 2026 Yuzeis
+﻿#!/usr/bin/env python3
+# Copyright (C) 2026 花吹雪又一年
 #
 # This file is part of Rock Kingdom Battle Protocol Parser (RKBPP).
 # Licensed under the GNU Affero General Public License v3.0 only (AGPL-3.0-only).

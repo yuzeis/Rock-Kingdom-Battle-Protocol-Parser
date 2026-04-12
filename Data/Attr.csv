@@ -1,6 +1,23 @@
-attr_id,name,status,note
-3,草,已确认,
-4,火,已确认,
-6,光,已确认,
-15,翼,已确认,
-18,恶,已确认,
+﻿attr_id,name,status,note
+1,无,RocoData??,source=TYPE_DICTIONARY; type_name=无系别
+2,普通,RocoData??,source=TYPE_DICTIONARY; type_name=普通系
+3,草,RocoData??,source=TYPE_DICTIONARY; type_name=草系
+4,火,RocoData??,source=TYPE_DICTIONARY; type_name=火系
+5,水,RocoData??,source=TYPE_DICTIONARY; type_name=水系
+6,光,RocoData??,source=TYPE_DICTIONARY; type_name=光系
+7,岩（废弃！）,RocoData??,source=TYPE_DICTIONARY; type_name=岩系（废弃！）
+8,地,RocoData??,source=TYPE_DICTIONARY; type_name=地系
+9,冰,RocoData??,source=TYPE_DICTIONARY; type_name=冰系
+10,龙,RocoData??,source=TYPE_DICTIONARY; type_name=龙系
+11,电,RocoData??,source=TYPE_DICTIONARY; type_name=电系
+12,毒,RocoData??,source=TYPE_DICTIONARY; type_name=毒系
+13,虫,RocoData??,source=TYPE_DICTIONARY; type_name=虫系
+14,武,RocoData??,source=TYPE_DICTIONARY; type_name=武系
+15,翼,RocoData??,source=TYPE_DICTIONARY; type_name=翼系
+16,萌,RocoData??,source=TYPE_DICTIONARY; type_name=萌系
+17,幽,RocoData??,source=TYPE_DICTIONARY; type_name=幽系
+18,恶,RocoData??,source=TYPE_DICTIONARY; type_name=恶系
+19,机械,RocoData??,source=TYPE_DICTIONARY; type_name=机械系
+20,幻,RocoData??,source=TYPE_DICTIONARY; type_name=幻系
+21,空,RocoData??,source=TYPE_DICTIONARY
+90,Nonicon,RocoData??,source=TYPE_DICTIONARY

@@ -1,13 +1,13 @@
-项目名称：洛克王国战斗协议解析器
+﻿项目名称：洛克王国战斗协议解析器
 项目简称：RKBPP
 版本：Rock Kingdom Battle Protocol Parser-Ver1.0(Morgendämmerung)
-作者：Yuzeis
-版权：Copyright (c) 2026 Yuzeis
+作者：花吹雪又一年
+版权：Copyright (c) 2026 花吹雪又一年
 
 本项目采用 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
 
 署名与声明保留要求：
-1. 再分发或衍生版本必须保留原作者署名：Yuzeis；
+1. 再分发或衍生版本必须保留原作者署名：花吹雪又一年；
 2. 必须保留本 NOTICE 文件；
 3. 必须保留 LICENSE 文件；
 4. 必须保留原版权声明；
