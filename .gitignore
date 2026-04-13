@@ -8,5 +8,14 @@ env/
 dist/
 build/
 *.log
+!Update.log
 *.pcap
 *.csv
+!Data/*.csv
+key.txt
+*.stdout.txt
+*.stderr.txt
+audit_*/
+smoke_*/
+replay_*/
+rkpp_*_20*/

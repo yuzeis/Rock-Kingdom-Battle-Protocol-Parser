@@ -1,0 +1,18 @@
+{
+  "files": {
+    "attr_map.json": 86,
+    "buff_map.json": 1925,
+    "buffbase_map.json": 1879,
+    "monster_map.json": 11176,
+    "monster_skillbank_map.json": 14588,
+    "opcode_pb_map.json": 1497,
+    "pb_message_index.json": 9883,
+    "pet_map.json": 6575,
+    "pet_skill_map.json": 881,
+    "skill_map.json": 1378,
+    "special_move_map.json": 1443
+  },
+  "format": "rkpp-data-bundle-v1",
+  "generated_at": "2026-04-13T13:11:54+00:00",
+  "source_kind": "offline-import"
+}

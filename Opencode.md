@@ -1,8 +1,8 @@
-# RKBPP Opencode
+﻿# RKPP Opencode
 
 ## 1. 文档范围
 
-本文档描述 Ver1.2 当前已经落实到代码中的 opencode 解析策略，重点覆盖：
+本文档描述 Ver1.3 当前已经落实到代码中的 opencode 解析策略，重点覆盖：
 
 - BE21 外层结构
 - `0x4013` 解密后 outer record 结构
@@ -70,32 +70,53 @@ TCP 重组后，当前按 BE21 帧切分。
 当前标准路径按以下结构解析：
 
 - `body[0:4]` -> `magic`
-- `body[4:8]` -> `opcode`
+- `body[4:8]` -> `raw opcode`
 - `body[8:10]` -> 固定标识 `0x3963`
 - `body[10:14]` -> `req_seq`
 - `body[14:]` -> payload
 
-### 3.3 c2s 兜底
+当前已确认部分 c2s 包使用 `0x0001xxxx` 形式的 32 位 opcode。  
+因此 Ver1.3 会同时保留：
 
-对于未命中 `0x3963` 的 c2s 包，当前保留一条兼容路径：
+- `raw_opcode`
+- `raw_opcode_hex`
+- `opcode_normalized`
 
-- 只要长度满足最低要求，仍尝试用 `body[4:8]` 读取 `opcode`
-- 其余部分直接作为 payload 继续解析
+并在命中 `0x0001xxxx` 时，把低 16 位作为实际语义 opcode 使用。
 
-这条路径用于兼容格式变体，不表示其结构已经完全确认。
+### 3.3 c2s 特殊分支
+
+当前保留一个非常窄的特殊分支给短心跳响应：
+
+- 通过固定控制字节识别
+- `opcode` 位于 `body[6:8]`
+- 当前仅确认 `0x013E`
+
+除该分支外，未命中 `0x3963` 的 c2s 包当前不会再走旧的宽松兜底，以避免把未知格式误判成已支持协议。
 
 ---
 
 ## 4. TSF4G 尾巴处理
 
-当前实现兼容历史抓包中稳定出现的尾巴：
+当前实现兼容带 marker 的变长 TSF4G 尾巴。
+
+当前已观察到的实际尾长包括：
 
 - `...tsf4g\x06`
+- `...tsf4g\x08`
+- `...tsf4g\x09`
+- `...tsf4g\x0A`
+- `...tsf4g\x0E`
+- `...tsf4g\x12`
 - `...tsf4g\x01`
 
-同时拒绝大 pad 值误截断。
+Ver1.3 的处理方式是：
 
-这块逻辑的目的不是实现通用 PKCS7，而是兼容腾讯这类带 marker 的历史尾巴格式。
+- 若尾部命中 `tsf4g<N>`，则按最后 1 字节 `N` 表示的总尾长剥离
+- 同时记录 `payload_trailer_len`
+- 保留对 `...tsf4g\x01` 和小范围 PKCS7 形式的兼容
+
+这块逻辑的目的不是实现通用 PKCS7，而是兼容腾讯这类带 marker 的历史尾巴格式，并修正 live-decode 中正文被尾巴污染的问题。
 
 ---
 
@@ -103,7 +124,7 @@ TCP 重组后，当前按 BE21 帧切分。
 
 ### 5.1 底层 proto 树
 
-`rkbpp_proto.py` 当前仍负责：
+`rkpp_proto.py` 当前仍负责：
 
 - `read_varint()`
 - `parse_proto_message()`
@@ -117,7 +138,7 @@ TCP 重组后，当前按 BE21 帧切分。
 
 ### 5.2 schema 数据来源
 
-`rkbpp_analysis.py` 使用：
+`rkpp_analysis.py` 使用：
 
 - `Data/opcode.json`
 - `Data/proto_schema.json`
@@ -223,7 +244,23 @@ TCP 重组后，当前按 BE21 帧切分。
 
 ---
 
-## 8. `opencode_summary.csv`
+## 8. 特殊非 protobuf 控制帧
+
+当前已确认以下 opcode 不应直接按 protobuf 线格式解析：
+
+- `0x013D`：`ZoneSceneHeartbeatNty`
+- `0x013F`：`ZoneSceneHeartbeatResultNty`
+
+Ver1.3 已为其增加专门的二进制定长解析：
+
+- `0x013D` -> `heartbeat_seq`、`server_logic_tick_ivl`
+- `0x013F` -> `ret_info.ret_code`、`heartbeat_seq`、`server_time`、`trans_delay_time`、`avg_trans_delay_time`、`server_logic_frame`
+
+因此这两类包在当前离线实跑中不再产生伪 `root_clean=False`。
+
+---
+
+## 9. `opencode_summary.csv`
 
 当前会额外输出一份面向下游消费的精简 CSV：
 
@@ -243,7 +280,7 @@ TCP 重组后，当前按 BE21 帧切分。
 
 ---
 
-## 9. relay event 结构
+## 10. relay event 结构
 
 relay server 推送的事件对象当前包含：
 
@@ -264,7 +301,7 @@ relay server 推送的事件对象当前包含：
 
 ---
 
-## 10. 当前仍未完全定论的部分
+## 11. 当前仍未完全定论的部分
 
 以下内容当前不建议视为最终协议定论：
 

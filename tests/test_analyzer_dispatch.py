@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 import unittest
 
-import rkbpp_analyzer as analyzer
-from rkbpp_reporter import BattleConsoleReporter
+import rkpp_analyzer as analyzer
+from rkpp_reporter import BattleConsoleReporter
 
 
 class DummyLogger:
@@ -35,7 +35,7 @@ class AnalyzerDispatchTests(unittest.TestCase):
             "_message_name": "ZoneBattleRoleLeaveNotify",
         }
 
-        kind, summary = analyzer.RkbppAnalyzer._summarize(object(), record, None)
+        kind, summary = analyzer.RkppAnalyzer._summarize(object(), record, None)
 
         self.assertEqual(kind, "schema_decoded")
         self.assertEqual(summary["opcode_hex"], "0x132A")
@@ -43,7 +43,7 @@ class AnalyzerDispatchTests(unittest.TestCase):
         self.assertEqual(summary["schema_fields"], ["player_uin", "reason"])
 
     def test_schema_fallback_text_inlines_simple_fields(self) -> None:
-        text = analyzer.RkbppAnalyzer._fmt_text(object(), "schema_decoded", {
+        text = analyzer.RkppAnalyzer._fmt_text(object(), "schema_decoded", {
             "opcode_hex": "0x132A",
             "opcode_name": "ZoneBattleRoleLeaveNotify",
             "schema_found": True,
@@ -55,7 +55,7 @@ class AnalyzerDispatchTests(unittest.TestCase):
         self.assertIn("reason=1", text)
 
     def test_schema_fallback_text_inlines_nested_act_name(self) -> None:
-        text = analyzer.RkbppAnalyzer._fmt_text(object(), "schema_decoded", {
+        text = analyzer.RkppAnalyzer._fmt_text(object(), "schema_decoded", {
             "opcode_hex": "0x0414",
             "opcode_name": "ZoneScenePlayActsNotify",
             "schema_found": True,
@@ -92,14 +92,14 @@ class AnalyzerDispatchTests(unittest.TestCase):
             "_message_name": "client_move",
         }
 
-        kind, summary = analyzer.RkbppAnalyzer._summarize(object(), record, {"message_id": 11})
+        kind, summary = analyzer.RkppAnalyzer._summarize(object(), record, {"message_id": 11})
 
         self.assertEqual(kind, "schema_decoded")
         self.assertEqual(summary["message"], "client_move")
         self.assertEqual(summary["inner_message_id"], 11)
 
     def test_key_update_resets_error_alert_state(self) -> None:
-        inst = analyzer.RkbppAnalyzer(
+        inst = analyzer.RkppAnalyzer(
             port=8195,
             logger=DummyLogger(),  # type: ignore[arg-type]
             writer=None,
@@ -126,7 +126,7 @@ class AnalyzerDispatchTests(unittest.TestCase):
         original_write_key_file = analyzer.write_key_file
         analyzer.write_key_file = lambda *_args, **_kwargs: None
         try:
-            analyzer.RkbppAnalyzer._handle_be21(inst, flow, be21, object(), None)
+            analyzer.RkppAnalyzer._handle_be21(inst, flow, be21, object(), None)
         finally:
             analyzer.write_key_file = original_write_key_file
 

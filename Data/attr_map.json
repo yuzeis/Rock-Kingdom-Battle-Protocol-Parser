@@ -1,0 +1,602 @@
+{
+  "1": {
+    "editor_name": "生命",
+    "id": 1,
+    "is_percent": false,
+    "is_ui_show": 1,
+    "name": "生命",
+    "ui_type": 1
+  },
+  "11": {
+    "editor_name": "命中率",
+    "id": 11,
+    "is_percent": true,
+    "name": "命中率"
+  },
+  "12": {
+    "editor_name": "闪避率",
+    "id": 12,
+    "is_percent": true,
+    "name": "闪避率"
+  },
+  "13": {
+    "editor_name": "暴击几率",
+    "id": 13,
+    "is_percent": true,
+    "name": "暴击几率"
+  },
+  "14": {
+    "editor_name": "暴击抵抗",
+    "id": 14,
+    "is_percent": true,
+    "name": "暴击抵抗"
+  },
+  "15": {
+    "editor_name": "暴击伤害",
+    "id": 15,
+    "is_percent": true,
+    "name": "暴击伤害"
+  },
+  "16": {
+    "editor_name": "暴击伤害抵抗",
+    "id": 16,
+    "is_percent": true,
+    "name": "暴击伤害抵抗"
+  },
+  "17": {
+    "editor_name": "物理攻击加成",
+    "id": 17,
+    "is_percent": true,
+    "name": "物理攻击加成"
+  },
+  "18": {
+    "editor_name": "魔法攻击加成",
+    "id": 18,
+    "is_percent": true,
+    "name": "魔法攻击加成"
+  },
+  "19": {
+    "editor_name": "物理伤害减免",
+    "id": 19,
+    "is_percent": true,
+    "name": "物理伤害减免"
+  },
+  "2": {
+    "editor_name": "物攻",
+    "id": 2,
+    "is_percent": false,
+    "is_ui_show": 1,
+    "name": "物攻",
+    "ui_type": 1
+  },
+  "20": {
+    "editor_name": "魔法伤害减免",
+    "id": 20,
+    "is_percent": true,
+    "name": "魔法伤害减免"
+  },
+  "21": {
+    "editor_name": "全伤害加成",
+    "id": 21,
+    "is_percent": true,
+    "name": "全伤害加成"
+  },
+  "22": {
+    "editor_name": "全伤害减免",
+    "id": 22,
+    "is_percent": true,
+    "name": "全伤害减免"
+  },
+  "23": {
+    "editor_name": "伤害波动下限",
+    "id": 23,
+    "is_percent": true,
+    "name": "伤害波动下限"
+  },
+  "24": {
+    "editor_name": "伤害波动上限",
+    "id": 24,
+    "is_percent": true,
+    "name": "伤害波动上限"
+  },
+  "25": {
+    "editor_name": "当前血量",
+    "id": 25,
+    "is_percent": false,
+    "name": "当前血量"
+  },
+  "26": {
+    "editor_name": "宠物伤害类型1",
+    "id": 26,
+    "is_percent": false,
+    "name": "宠物伤害类型1"
+  },
+  "27": {
+    "editor_name": "宠物伤害类型2",
+    "id": 27,
+    "is_percent": false,
+    "name": "宠物伤害类型2"
+  },
+  "28": {
+    "editor_name": "宠物伤害类型3",
+    "id": 28,
+    "is_percent": false,
+    "name": "宠物伤害类型3"
+  },
+  "29": {
+    "editor_name": "物理攻击力加成",
+    "id": 29,
+    "is_percent": true,
+    "name": "物理攻击力加成"
+  },
+  "3": {
+    "editor_name": "魔攻",
+    "id": 3,
+    "is_percent": false,
+    "is_ui_show": 1,
+    "name": "魔攻",
+    "ui_type": 1
+  },
+  "30": {
+    "editor_name": "魔法攻击力加成",
+    "id": 30,
+    "is_percent": true,
+    "name": "魔法攻击力加成"
+  },
+  "31": {
+    "editor_name": "物理防御力加成",
+    "id": 31,
+    "is_percent": true,
+    "name": "物理防御力加成"
+  },
+  "32": {
+    "editor_name": "魔法防御力加成",
+    "id": 32,
+    "is_percent": true,
+    "name": "魔法防御力加成"
+  },
+  "33": {
+    "editor_name": "物理攻击力削弱",
+    "id": 33,
+    "is_percent": true,
+    "name": "物理攻击力削弱"
+  },
+  "34": {
+    "editor_name": "魔法攻击力削弱",
+    "id": 34,
+    "is_percent": true,
+    "name": "魔法攻击力削弱"
+  },
+  "35": {
+    "editor_name": "物理防御力削弱",
+    "id": 35,
+    "is_percent": true,
+    "name": "物理防御力削弱"
+  },
+  "36": {
+    "editor_name": "魔法防御力削弱",
+    "id": 36,
+    "is_percent": true,
+    "name": "魔法防御力削弱"
+  },
+  "37": {
+    "editor_name": "克制强化",
+    "id": 37,
+    "is_percent": true,
+    "name": "克制强化"
+  },
+  "38": {
+    "editor_name": "抵抗强化",
+    "id": 38,
+    "is_percent": true,
+    "name": "抵抗强化"
+  },
+  "39": {
+    "editor_name": "普通技能强化",
+    "id": 39,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "普通技能强化",
+    "ui_type": 3
+  },
+  "4": {
+    "editor_name": "物防",
+    "id": 4,
+    "is_percent": false,
+    "is_ui_show": 1,
+    "name": "物防",
+    "ui_type": 1
+  },
+  "40": {
+    "editor_name": "草系技能强化",
+    "id": 40,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "草系技能强化",
+    "ui_type": 3
+  },
+  "41": {
+    "editor_name": "火系技能强化",
+    "id": 41,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "火系技能强化",
+    "ui_type": 3
+  },
+  "42": {
+    "editor_name": "水系技能强化",
+    "id": 42,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "水系技能强化",
+    "ui_type": 3
+  },
+  "43": {
+    "editor_name": "光系技能强化",
+    "id": 43,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "光系技能强化",
+    "ui_type": 3
+  },
+  "45": {
+    "editor_name": "地系技能强化",
+    "id": 45,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "地系技能强化",
+    "ui_type": 3
+  },
+  "46": {
+    "editor_name": "冰系技能强化",
+    "id": 46,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "冰系技能强化",
+    "ui_type": 3
+  },
+  "47": {
+    "editor_name": "龙系技能强化",
+    "id": 47,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "龙系技能强化",
+    "ui_type": 3
+  },
+  "48": {
+    "editor_name": "电系技能强化",
+    "id": 48,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "电系技能强化",
+    "ui_type": 3
+  },
+  "49": {
+    "editor_name": "毒系技能强化",
+    "id": 49,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "毒系技能强化",
+    "ui_type": 3
+  },
+  "5": {
+    "editor_name": "魔防",
+    "id": 5,
+    "is_percent": false,
+    "is_ui_show": 1,
+    "name": "魔防",
+    "ui_type": 1
+  },
+  "50": {
+    "editor_name": "虫系技能强化",
+    "id": 50,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "虫系技能强化",
+    "ui_type": 3
+  },
+  "51": {
+    "editor_name": "武系技能强化",
+    "id": 51,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "武系技能强化",
+    "ui_type": 3
+  },
+  "52": {
+    "editor_name": "翼系技能强化",
+    "id": 52,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "翼系技能强化",
+    "ui_type": 3
+  },
+  "53": {
+    "editor_name": "萌系技能强化",
+    "id": 53,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "萌系技能强化",
+    "ui_type": 3
+  },
+  "54": {
+    "editor_name": "幽系技能强化",
+    "id": 54,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "幽系技能强化",
+    "ui_type": 3
+  },
+  "55": {
+    "editor_name": "恶系技能强化",
+    "id": 55,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "恶系技能强化",
+    "ui_type": 3
+  },
+  "56": {
+    "editor_name": "机械技能强化",
+    "id": 56,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "机械技能强化",
+    "ui_type": 3
+  },
+  "57": {
+    "editor_name": "幻系技能强化",
+    "id": 57,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "幻系技能强化",
+    "ui_type": 3
+  },
+  "58": {
+    "editor_name": "普通技能抗性",
+    "id": 58,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "普通技能抗性",
+    "ui_type": 3
+  },
+  "59": {
+    "editor_name": "草系技能抗性",
+    "id": 59,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "草系技能抗性",
+    "ui_type": 3
+  },
+  "6": {
+    "editor_name": "速度",
+    "id": 6,
+    "is_percent": false,
+    "is_ui_show": 1,
+    "name": "速度",
+    "ui_type": 1
+  },
+  "60": {
+    "editor_name": "火系技能抗性",
+    "id": 60,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "火系技能抗性",
+    "ui_type": 3
+  },
+  "61": {
+    "editor_name": "水系技能抗性",
+    "id": 61,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "水系技能抗性",
+    "ui_type": 3
+  },
+  "62": {
+    "editor_name": "光系技能抗性",
+    "id": 62,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "光系技能抗性",
+    "ui_type": 3
+  },
+  "64": {
+    "editor_name": "地系技能抗性",
+    "id": 64,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "地系技能抗性",
+    "ui_type": 3
+  },
+  "65": {
+    "editor_name": "冰系技能抗性",
+    "id": 65,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "冰系技能抗性",
+    "ui_type": 3
+  },
+  "66": {
+    "editor_name": "龙系技能抗性",
+    "id": 66,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "龙系技能抗性",
+    "ui_type": 3
+  },
+  "67": {
+    "editor_name": "电系技能抗性",
+    "id": 67,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "电系技能抗性",
+    "ui_type": 3
+  },
+  "68": {
+    "editor_name": "毒系技能抗性",
+    "id": 68,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "毒系技能抗性",
+    "ui_type": 3
+  },
+  "69": {
+    "editor_name": "虫系技能抗性",
+    "id": 69,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "虫系技能抗性",
+    "ui_type": 3
+  },
+  "70": {
+    "editor_name": "武系技能抗性",
+    "id": 70,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "武系技能抗性",
+    "ui_type": 3
+  },
+  "71": {
+    "editor_name": "翼系技能抗性",
+    "id": 71,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "翼系技能抗性",
+    "ui_type": 3
+  },
+  "72": {
+    "editor_name": "萌系技能抗性",
+    "id": 72,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "萌系技能抗性",
+    "ui_type": 3
+  },
+  "73": {
+    "editor_name": "幽系技能抗性",
+    "id": 73,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "幽系技能抗性",
+    "ui_type": 3
+  },
+  "74": {
+    "editor_name": "恶系技能抗性",
+    "id": 74,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "恶系技能抗性",
+    "ui_type": 3
+  },
+  "75": {
+    "editor_name": "机械技能抗性",
+    "id": 75,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "机械技能抗性",
+    "ui_type": 3
+  },
+  "76": {
+    "editor_name": "幻系技能抗性",
+    "id": 76,
+    "is_percent": true,
+    "is_ui_show": 1,
+    "name": "幻系技能抗性",
+    "ui_type": 3
+  },
+  "77": {
+    "editor_name": "被治疗加成",
+    "id": 77,
+    "is_percent": true,
+    "name": "被治疗加成"
+  },
+  "78": {
+    "editor_name": "护盾加成",
+    "id": 78,
+    "is_percent": true,
+    "name": "护盾加成"
+  },
+  "79": {
+    "editor_name": "生命",
+    "id": 79,
+    "is_percent": true,
+    "name": "生命"
+  },
+  "80": {
+    "editor_name": "物攻",
+    "id": 80,
+    "is_percent": true,
+    "name": "物攻"
+  },
+  "81": {
+    "editor_name": "魔攻",
+    "id": 81,
+    "is_percent": true,
+    "name": "魔攻"
+  },
+  "82": {
+    "editor_name": "物防",
+    "id": 82,
+    "is_percent": true,
+    "name": "物防"
+  },
+  "83": {
+    "editor_name": "魔防",
+    "id": 83,
+    "is_percent": true,
+    "name": "魔防"
+  },
+  "84": {
+    "editor_name": "速度",
+    "id": 84,
+    "is_percent": true,
+    "name": "速度"
+  },
+  "85": {
+    "editor_name": "基础生命上限",
+    "id": 85,
+    "is_percent": false,
+    "name": "基础生命上限"
+  },
+  "86": {
+    "editor_name": "基础物理攻击",
+    "id": 86,
+    "is_percent": false,
+    "name": "基础物理攻击"
+  },
+  "87": {
+    "editor_name": "基础魔法攻击",
+    "id": 87,
+    "is_percent": false,
+    "name": "基础魔法攻击"
+  },
+  "88": {
+    "editor_name": "基础物理防御",
+    "id": 88,
+    "is_percent": false,
+    "name": "基础物理防御"
+  },
+  "89": {
+    "editor_name": "基础魔法防御",
+    "id": 89,
+    "is_percent": false,
+    "name": "基础魔法防御"
+  },
+  "90": {
+    "editor_name": "基础速度",
+    "id": 90,
+    "is_percent": false,
+    "name": "基础速度"
+  },
+  "93": {
+    "editor_name": "系别极化",
+    "id": 93,
+    "is_percent": true,
+    "name": "系别极化"
+  },
+  "94": {
+    "editor_name": "系别钝化",
+    "id": 94,
+    "is_percent": true,
+    "name": "系别钝化"
+  }
+}

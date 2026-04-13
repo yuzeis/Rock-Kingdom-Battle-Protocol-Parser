@@ -1,327 +1,183 @@
-# RKBPP Update
+# RKPP Update
 
-## Ver1.2 - Zusammenhalt
+## Ver1.3 - Erneuerung
 
-Base Version: Ver1.1 - Urgewalt  
-Date: 2026-04-11
+Base Version: Ver1.2 - Zusammenhalt  
+Date: 2026-04-13
 
-本文档记录 Ver1.1 到 Ver1.2 的实际代码变化，重点是架构调整、schema 路径落地、relay server 和最近一轮问题修复。
+本文档记录 Ver1.2 到 Ver1.3 的实际变化。Ver1.2 的重点是 schema-driven 解码、语义 override 白名单、relay server 与 opencode 输出；Ver1.3 则在此基础上完成项目命名统一、本地离线数据包落地、数据敏感信息清理，以及目录下 live-decode 全流程修复。
 
 ---
 
 ## 1. 总体变化
 
-v1.1 的主结构仍然是“硬编码提取优先，schema 辅助”。  
-v1.2 则明确转向：
+Ver1.3 的核心目标是把 Ver1.2 已经搭好的 schema / relay / opencode 主路继续整理成更适合发布和维护的项目状态：
 
-- 少量高语义战斗包保留硬编码提取
-- 大量简单 opcode 改由 `opcode.json + proto_schema.json` 自动支持
-- analyzer 统一在 summary 层做 schema fallback
-
-这次版本更新的核心不是继续堆 opcode 提取函数，而是把“哪些必须手写、哪些应该交给 schema”这条边界真正落下来。
-
----
-
-## 2. 新增 schema-driven 解码主路
-
-### 2.1 新增 `rkbpp_analysis.py`
-
-Ver1.2 新增 schema 解码模块，负责：
-
-- 懒加载 `Data/opcode.json`
-- 懒加载 `Data/proto_schema.json`
-- 按 schema 把 field number 翻译成具名字典
-- 对已知宠物、技能、属性 id 做名称 enrichment
-
-当前数据规模：
-
-- `opcode.json`：1497 条 opcode 元信息
-- `proto_schema.json`：3232 条 message 定义
-- `proto_schema.json`：915 条 enum 定义
-
-### 2.2 analyzer 接入 schema 结果
-
-`rkbpp_analyzer.py` 现在在解析 record 后，会先调用：
-
-- `analysis.lookup_opcode()`
-- `analysis.decode_record()`
-
-并把结果写入：
-
-- `opcode_name`
-- `opcode_desc`
-- `decoded_json`
-- `root_json`
-- `record["_decoded"]`
-- `record["_schema_found"]`
-- `record["_message_name"]`
-
-### 2.3 summary 统一 fallback
-
-Ver1.1 中，未注册 opcode 只能得到有限的原始结果。  
-Ver1.2 中，未命中硬编码注册时统一返回：
-
-- `summary_kind = "schema_decoded"`
-
-同时用 `_schema_summary()` 和 `_schema_inline_parts()` 自动生成摘要文本。
+- 项目命名从 `RKBPP / rkbpp_*` 统一改为 `RKPP / rkpp_*`
+- 对外项目名统一为 `Roco-Kingdom-Protocol-Parser`
+- 运行时数据改为本项目 `Data/` 下的离线 JSON bundle
+- 继续保留 Ver1.2 的 schema-driven 解码主路和语义 override 策略
+- 强化 schema 解码后的宠物、技能、属性、Buff、技能池等名称补全
+- 修复 live-decode 实跑中暴露的 outer record / TSF4G / c2s opcode / 心跳控制帧问题
 
 ---
 
-## 3. opcode 注册策略从“全硬编码”改为“语义 override 白名单”
+## 2. 项目命名与文件名整理
 
-### 3.1 新增 `_SEMANTIC_OVERRIDE_OPCODES`
+Ver1.2 仍使用 `RKBPP` 和 `rkbpp_*` 命名。Ver1.3 已统一改为：
 
-Ver1.2 不再把所有支持的 opcode 都塞进 `_OPCODE_REGISTRY`。  
-现在只保留 14 个确实包含战斗语义推断价值的 opcode：
+- 项目简称：`RKPP`
+- Python 文件前缀：`rkpp_*`
+- 入口脚本：`rkpp_live_tools.py`
+- 核心模块：`rkpp_analyzer.py`、`rkpp_proto.py`、`rkpp_analysis.py`、`rkpp_reporter.py`、`rkpp_relay.py`
+- 文档标题与说明：`Roco-Kingdom-Protocol-Parser`
 
-- `0x0102`
-- `0x01A9`
-- `0x0220`
-- `0x130B`
-- `0x130C`
-- `0x1312`
-- `0x1316`
-- `0x131A`
-- `0x1322`
-- `0x1324`
-- `0x132C`
-- `0x13F3`
-- `0x13F4`
-- `0x13FC`
-
-### 3.2 删除大量低价值硬编码
-
-相较 v1.1，Ver1.2 删除了多类“只是把 field number 翻译成名字”的代码：
-
-- 纯翻译型 `extract_*`
-- 一行包装型 `_summarize_*`
-- 对应的 `_fmt_*`
-
-这些 opcode 现在直接由 schema 路径承担。
-
-这意味着新增一个普通 opcode 时，通常只需要补数据文件，不再需要改三处 Python 代码。
+这次整理的目的不是改变协议语义，而是为后续 Git 初始化、公开仓库命名和模块导入路径做统一。
 
 ---
 
-## 4. `0x0414` inner dispatch 行为修正
+## 3. 本地离线 Data bundle
 
-### 4.1 v1.1 / 早期 v1.2 的问题
+Ver1.3 不再要求运行时直接从外部 `Roco-Kingdom-World-Data-main` 目录读取数据。当前策略是：
 
-`0x0414` 是 inner message 容器。  
-之前 summary 层的逻辑是：
+- 使用 `tools/build_data_bundle.py` 从外部资料转换出本项目最适合使用的 JSON 索引
+- 生成后的索引只放在当前项目 `Data/` 下
+- 运行时只读取本地 `Data/`
+- `Data.py` 作为统一入口，优先加载 JSON bundle，并保留旧 CSV fallback 兼容
 
-- 如果 `inner_message_id` 命中 `_INNER_REGISTRY`，走专用 handler
-- 如果没命中，直接返回 `inner_unknown`
+当前已接入的本地索引包括：
 
-这导致大量其实已经被 schema 正确解码的 `0x0414` 包，在 CSV 里仍然表现为“未知 inner”。
-
-### 4.2 当前行为
-
-Ver1.2 已改成：
-
-- 命中 `390 / 200 / 51 / 1` 仍走专用 inner 语义提取
-- 未命中时，不再返回 `inner_unknown`
-- 直接回落到 `schema_decoded`
-- 同时保留 `inner_message_id`
-
-### 4.3 实测效果
-
-基于旧战斗抓包离线回放：
-
-- `inner_unknown`：`1665 -> 0`
-- `schema_decoded`：`172 -> 1837`
-
-已确认当前被 schema 正确覆盖的典型 inner 包包括：
-
-- `11` -> `client_move`
-- `35` -> `sync_player_status`
-- `173` -> `throw_catch_notify`
-- `31` -> `update_actor_logic_status`
-- `2` -> `actor_leave`
-
-这次修复的结论很明确：  
-问题不在 schema 本身，而在 dispatch 层之前把结果过早打成了 unknown。
+- `attr_map.json`
+- `skill_map.json`
+- `buff_map.json`
+- `buffbase_map.json`
+- `pet_map.json`
+- `monster_map.json`
+- `pet_skill_map.json`
+- `monster_skillbank_map.json`
+- `special_move_map.json`
+- `opcode_pb_map.json`
+- `pb_message_index.json`
+- `data_manifest.json`
 
 ---
 
-## 5. Reporter 接入 schema fallback
+## 4. 数据敏感信息清理
 
-Ver1.1 的 reporter 主要依赖硬编码 summary kind。  
-Ver1.2 新增：
+本轮审查发现 `Data/data_manifest.json` 曾包含构建来源绝对路径。Ver1.3 已调整生成逻辑：
 
-- `self._schema_opcode_handlers`
-- `_schema_detail_for_opcode()`
+- 不再写入 `source_root`
+- 不再写入本机用户目录
+- 不再写入当前项目绝对路径
+- manifest 仅保留 `generated_at`、`format`、`source_kind`、`files`
 
-这样即使某些简单战斗 opcode 不再保留硬编码提取，只要 schema 能给出稳定字段，reporter 仍可输出事件。
+已重新扫描 `Data/`，确认未再命中以下敏感路径/标识：
 
-当前已桥接的 schema opcode 包括：
+- 本机用户目录
+- 当前项目绝对路径
+- 外部数据源目录名
+- `source_root`
 
-- `0x1326`
-- `0x132A`
-- `0x132D`
-- `0x1334`
-- `0x133C`
-- `0x13F6`
-
----
-
-## 6. 新增 relay server 与 opencode 输出
-
-### 6.1 新增 `rkbpp_relay.py`
-
-Ver1.2 增加本地 HTTP NDJSON relay server：
-
-- `GET /health`
-- `GET /latest`
-- `GET /events`
-
-用于把解析后的 opcode 事件推给本地前端或其他工具。
-
-### 6.2 CLI 新增 `opencode-server`
-
-`rkbpp_live_tools.py` 现在支持第四个命令：
-
-- `opencode-server`
-
-该模式会同时：
-
-- 抓包或离线回放
-- 输出 `decoded_packets.csv`
-- 输出 `opencode_summary.csv`
-- 启动本地 relay server
-
-### 6.3 提取公共摘要函数
-
-`CsvSink` 和 relay server 之前各自拼接 opcode 摘要。  
-Ver1.2 已抽成：
-
-- `rkbpp_io.build_opcode_summary()`
-
-统一输出：
-
-- `opencode`
-- `meaning`
-- `content`
+说明：`skill_map.json` 中仍可能保留 `/Game/ArtRes/...` 一类游戏资源路径；这不是本机路径，也不是当前项目路径，因此本轮没有按敏感信息删除。
 
 ---
 
-## 7. 正确性修复
+## 5. 语义数据 enrich
 
-### 7.1 `field_groups()` 缓存
+Ver1.3 在 Ver1.2 schema 主路基础上继续补强了解码后的语义数据：
 
-`rkbpp_proto.py` 中：
+- `rkpp_analysis.py` 的 `_enrich_known_id_names()` 现在会补全 pet / skill / attr / buff / base skill pool / monster active skills 等信息
+- `lookup_opcode()` 会合并本地 protobuf opcode 映射
+- `decode_record()` 会输出 `pb_message_name`、`pb_full_name`、`pb_proto_file`
+- `rkpp_proto.py` 的技能、Buff、BuffBase、宠物、动态技能与行动效果提取会附带更丰富的本地 meta
+- `rkpp_reporter.py` 的战斗摘要能展示更多来自本地数据的名称与基础 ID
 
-- `field_groups()` 现在把分组结果缓存到 `msg["_groups"]`
-
-这修掉了同一消息被反复分组的热路径浪费，特别是 `0x1324` 这类多 entry 消息。
-
-### 7.2 proto 解析字段数上界
-
-`parse_proto_message()` 新增：
-
-- `max_fields=5000`
-
-避免异常 payload 导致 field 列表失控膨胀。
-
-### 7.3 连续错误计数修正
-
-`_parse_decrypted()` 返回 `None` 时：
-
-- 不再被当成“成功解析”
-- 会调用 `_record_error()`
-- 只有真正得到 `parsed_info` 时才重置连续错误计数
-
-### 7.4 key 更新时重置错误状态
-
-收到新的 `0x1002` key 后，会重置：
-
-- `_consecutive_errors`
-- `_error_alerted`
-
-避免之前“告警只触发一次，后续换 key 后不再恢复”的问题。
-
-### 7.5 `extract_130c_result()` 空结果修正
-
-现在只有真正提取到语义字段时才返回结果；  
-仅包含 `opcode/opcode_hex` 的空壳 dict 不再被误判为有效内容。
-
-### 7.6 `strip_tsf4g_padding()` 修正
-
-当前逻辑改为：
-
-- 继续兼容历史抓包中稳定出现的 `...tsf4g\x06`
-- 兼容 `...tsf4g\x01`
-- 同时拒绝过大的异常 pad 值，避免误截断正文
-
-实测旧抓包中命中的真实尾巴主要是：
-
-- `...tsf4g\x06`
-
-因此这里仍然保留了对 TSF4G 历史尾巴格式的兼容，而不是强行改成纯 PKCS7 逻辑。
+这部分延续 Ver1.2 的方向：简单字段翻译仍交给 schema，只有高价值语义提取保留在代码里。
 
 ---
 
-## 8. 文本摘要改进
+## 6. live-decode 外层协议修复
 
-schema fallback 的 `summary_text` 现在不只是列字段名。  
-`_schema_inline_parts()` 会尝试直接内联简单标量字段，例如：
+使用目录下历史 pcap 进行 `live-decode --read-pcap` 后，Ver1.2 路径暴露出几个问题：
 
-- `player_uin=12345`
-- `reason=1`
+- c2s 中存在 `0x000101A9`、`0x00010133` 这类 32 位 opcode，低 16 位才对应现有语义表中的 `0x01A9`、`0x0133`
+- s2c / c2s payload 末尾存在可变长度 `TSF4G` 尾巴，旧逻辑只兼容固定 `...tsf4g\x06`
+- `0x013D / 0x013F` 心跳类包不是 protobuf 线格式，直接交给 `parse_proto_message()` 会产生伪 `root_clean=False`
 
-对于 `0x0414` 这类带 `acts` 数组的消息，还会显示：
+Ver1.3 已修复：
 
-- `acts[0]=client_move`
-- `acts[0]=sync_player_status`
-
-这样在不展开完整 `decoded_json` 的情况下，也能快速判断 scene 内层动作类型。
-
----
-
-## 9. 测试
-
-Ver1.2 新增了最小回归测试集，当前覆盖：
-
-- semantic override 白名单
-- 未注册 opcode 的 schema fallback
-- schema 文本摘要
-- `0x0414` unknown inner fallback
-- key 更新后的错误状态重置
-- `strip_tsf4g_padding` 边界
-- `extract_130c_result` 空结果返回
-
-当前测试目录：
-
-- [tests/test_analyzer_dispatch.py](./tests/test_analyzer_dispatch.py)
-- [tests/test_proto_guards.py](./tests/test_proto_guards.py)
+- 新增 `normalize_c2s_opcode()`，将 `0x0001xxxx` 形式归一为低 16 位 opcode
+- 保留 `raw_opcode`、`raw_opcode_hex`、`opcode_normalized`，避免丢失原始观察值
+- `strip_tsf4g_padding()` 改为识别 `tsf4g<N>` 中最后 1 字节给出的总尾长
+- 新增 `tsf4g_trailer_len()`，在 CSV 中暴露 `payload_trailer_len`
+- 新增 `parse_special_payload()`，专门解析 `0x013D / 0x013F` 二进制定长心跳控制帧
+- `opencode-server` 默认端口不可用时会自动回退到后续可用端口，避免交互式 `4 -> 2` 因 `8765` 被占用而直接退出
 
 ---
 
-## 10. 验证结果
+## 7. CSV 输出变化
 
-用 2026-04-11 的历史战斗抓包离线回放，当前结果为：
+`decoded_packets.csv` 在 Ver1.3 中新增以下外层审查字段：
 
-- `packets = 3104`
-- `rows = 1962`
+- `raw_opcode`
+- `raw_opcode_hex`
+- `opcode_normalized`
+- `payload_trailer_len`
+
+这些字段主要用于后续逆向和抓包审查：
+
+- `opcode_hex` 表示归一化后用于语义表和 schema 的 opcode
+- `raw_opcode_hex` 表示线上解密体中的原始 32 位 opcode
+- `opcode_normalized=True` 表示本行发生过 `0x0001xxxx -> 0xxxx` 归一化
+- `payload_trailer_len` 表示本行被识别并剥离的 TSF4G 尾部长度
+
+---
+
+## 8. 测试与验证
+
+当前单元测试已扩展到 24 项，覆盖：
+
+- Data bundle 加载
+- schema fallback
+- 语义 override dispatch
+- TSF4G 变长尾巴剥离
+- c2s opcode 归一化
+- `0x013D / 0x013F` 二进制心跳解析
+
+运行结果：
+
+- `python -m unittest discover -s tests`
+- `Ran 24 tests`
+- `OK`
+
+目录下离线 live-decode 审查命令：
+
+```powershell
+python .\rkpp_live_tools.py live-decode --read-pcap .\rkpp_battle_analyze_20260411_154128\live_capture.pcap --key <REDACTED_KEY> --out-dir .\audit_live_decode_20260413_fix2
+```
+
+最终结果：
+
+- `packets = 2048`
+- `rows = 1209`
 - `errors = 0`
 - `listener_errors = 0`
+- `unknown_opcode = 0`
+- `root_clean=False = 0`
 
-并且：
+对比修复前同一份离线流：
 
-- `battle-analyze` 与 `live-decode` 的核心输出逐行一致
-- `0x0414` 的未知 inner 不再堆积
-- battle parser 仍能正常输出开场、回合、动作、战斗结束
+- `unknown_opcode = 313 -> 0`
+- `root_clean=False = 1156 -> 0`
 
 ---
 
-## 11. 相比 Ver1.1 的核心结论
+## 9. 相比 Ver1.2 的核心结论
 
-如果说 Ver1.1 的重点是：
+Ver1.2 已经完成了从硬编码主导到 schema 主路的切换；Ver1.3 的重点是把这条主路继续工程化：
 
-- 把抓包、重组、解密、战斗摘要这条链路做稳
-
-那么 Ver1.2 的重点就是：
-
-- 把协议支持方式从“继续堆硬编码函数”切换到“schema 主路 + 语义 override”
-
-这使得后续维护成本明显下降，也让大量新 opcode 的接入不再需要重复写低价值胶水代码。
+- 命名更统一，便于 Git 仓库与模块维护
+- 数据改为本地离线包，避免运行时依赖外部项目目录
+- enrich 覆盖面更广，解码结果更可读
+- live-decode 经过目录下真实 pcap 回放验证，外层解析和 protobuf 边界更稳
+- Data 中的本机路径和外部项目路径残留已清理

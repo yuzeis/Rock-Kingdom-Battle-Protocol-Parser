@@ -1,8 +1,8 @@
-# RKBPP Server 使用说明
+﻿# RKPP Server 使用说明
 
 ## 1. 功能概览
 
-Ver1.2 新增 `opencode-server` 模式，用于把解析结果通过本地 HTTP relay 暴露给其他程序。
+`opencode-server` 模式延续自 Ver1.2；Ver1.3 主要补上项目命名统一、本地离线数据接入，以及 live-decode outer record 修复后的配套说明。
 
 该模式适合：
 
@@ -19,6 +19,12 @@ Ver1.2 新增 `opencode-server` 模式，用于把解析结果通过本地 HTTP 
 4. 输出 CSV
 5. 同时通过 HTTP 推送摘要事件
 
+Ver1.3 相对 Ver1.2 的直接影响是：
+
+- `decoded_packets.csv` 中会多出 `raw_opcode`、`raw_opcode_hex`、`opcode_normalized`、`payload_trailer_len`
+- c2s `0x0001xxxx` 将在 relay / summary 层按低 16 位 opcode 命名
+- `0x013D / 0x013F` 心跳类控制帧现在能得到稳定摘要，不再在离线回放中大量出现伪异常
+
 ---
 
 ## 2. 启动方式
@@ -26,13 +32,13 @@ Ver1.2 新增 `opencode-server` 模式，用于把解析结果通过本地 HTTP 
 ### 2.1 实时抓包
 
 ```powershell
-python .\rkbpp_live_tools.py opencode-server --iface "以太网" --port 8195 --key 59484438426252355a494e7467545057 --relay-host 127.0.0.1 --relay-port 8765
+python .\rkpp_live_tools.py opencode-server --iface "以太网" --port 8195 --key 59484438426252355a494e7467545057 --relay-host 127.0.0.1 --relay-port 8765
 ```
 
 ### 2.2 离线 pcap 回放
 
 ```powershell
-python .\rkbpp_live_tools.py opencode-server --read-pcap .\live_capture.pcap --key 59484438426252355a494e7467545057 --out-dir .\relay_replay --relay-port 8765
+python .\rkpp_live_tools.py opencode-server --read-pcap .\live_capture.pcap --key 59484438426252355a494e7467545057 --out-dir .\relay_replay --relay-port 8765
 ```
 
 ### 2.3 交互式模式
@@ -40,7 +46,7 @@ python .\rkbpp_live_tools.py opencode-server --read-pcap .\live_capture.pcap --k
 直接运行：
 
 ```powershell
-python .\rkbpp_live_tools.py
+python .\rkpp_live_tools.py
 ```
 
 在菜单里选择：
@@ -63,6 +69,12 @@ python .\rkbpp_live_tools.py
 
 ```text
 [relay] listening url=http://127.0.0.1:8765 endpoints=/health,/latest,/events
+```
+
+如果默认端口 `8765` 已被本机其他程序占用，Ver1.3 当前会自动顺延尝试后续可用端口，并在日志中输出类似：
+
+```text
+[relay] requested port 8765 unavailable, fallback port=8766
 ```
 
 ---
@@ -158,6 +170,8 @@ http://127.0.0.1:8765/latest?limit=10
 http://127.0.0.1:8765/latest?limit=20
 ```
 
+如果日志显示已回退到其他端口，请把上面的 `8765` 替换成实际监听端口。
+
 ### 6.2 PowerShell 实时订阅
 
 ```powershell
@@ -210,13 +224,20 @@ with urllib.request.urlopen("http://127.0.0.1:8765/events") as resp:
 
 server 事件和 `opencode_summary.csv` 共用同一个摘要构造逻辑：
 
-- `rkbpp_io.build_opcode_summary()`
+- `rkpp_io.build_opcode_summary()`
 
 因此通常可以这样理解：
 
 - 想做离线导入：读 `opencode_summary.csv`
 - 想做在线界面：连 `/events`
 - 想拿完整调试上下文：读 `decoded_packets.csv`
+
+如果你要审查 outer record 层的封装问题，优先看 `decoded_packets.csv`，因为新增字段只在这份明细表中保留：
+
+- `raw_opcode`
+- `raw_opcode_hex`
+- `opcode_normalized`
+- `payload_trailer_len`
 
 ---
 
