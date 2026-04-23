@@ -203,6 +203,58 @@ def _compact_summary_value(value: Any, *, max_items: int = 4, max_text: int = 80
     return value
 
 
+def _json_text(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+_RECORD_ROW_FIELD_MAP: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("transport_kind", ("transport_kind",)),
+    ("transport_layout", ("transport_layout",)),
+    ("transport_seq", ("transport_seq",)),
+    ("record_len", ("record_len",)),
+    ("session_id_hex", ("session_id_hex",)),
+    ("sub_id_hex", ("sub_id_hex",)),
+    ("protocol_direction", ("direction",)),
+    ("opcode", ("opcode",)),
+    ("opcode_hex", ("opcode_hex",)),
+    ("raw_opcode", ("raw_opcode",)),
+    ("raw_opcode_hex", ("raw_opcode_hex",)),
+    ("opcode_normalized", ("opcode_normalized",)),
+    ("subtype", ("subtype",)),
+    ("magic_hex", ("magic_hex",)),
+    ("req_seq", ("req_seq",)),
+    ("payload_len", ("payload_len",)),
+    ("payload_trailer_len", ("payload_trailer_len",)),
+    ("root_clean", ("root", "clean")),
+)
+
+
+def _nested_get(mapping: dict[str, Any], path: tuple[str, ...], default: Any = "") -> Any:
+    current: Any = mapping
+    for key in path:
+        if not isinstance(current, dict):
+            return default
+        current = current.get(key, default)
+    return default if current is None else current
+
+
+@_register_fmt("tgcp_control")
+def _fmt_tgcp_control(summary: dict[str, Any]) -> str:
+    parts = [summary.get("cmd_hex") or "tgcp_control"]
+    name = summary.get("cmd_name")
+    if name:
+        parts.append(name)
+    if summary.get("session_key_ascii"):
+        parts.append(f"key={summary['session_key_ascii']}")
+    elif summary.get("session_key_hex"):
+        parts.append(f"key_hex={summary['session_key_hex']}")
+    if summary.get("sstop_code_name"):
+        parts.append(f"sstop={summary['sstop_code_name']}")
+    elif summary.get("body_len") not in (None, ""):
+        parts.append(f"body_len={summary['body_len']}")
+    return " | ".join(str(part) for part in parts if part not in (None, ""))
+
+
 def _schema_inline_parts(decoded: dict[str, Any], *, max_parts: int = 4) -> list[str]:
     parts: list[str] = []
     for key, value in decoded.items():
@@ -261,16 +313,6 @@ def _fmt_roster_init(so):
     nick  = ((so.get("metadata") or {}).get("player") or {}).get("nickname")
     parts = ([f"player={nick}"] if nick else []) + (["roster=" + "/".join(str(n) for n in names[:6])] if names else [])
     return " | ".join(parts)
-
-@_register_fmt("state_update")
-def _fmt_state_update(so):
-    ws = so.get("wrappers") or []
-    parts = [
-        f"{it.get('name') or it.get('pet_id')}:{it.get('current_hp')}/{it.get('battle_max_hp')}"
-        if it.get("current_hp") is not None else str(it.get("name") or it.get("pet_id"))
-        for it in ws[:4]
-    ]
-    return f"wrappers={len(ws)}" + (f" | {'; '.join(parts)}" if parts else "")
 
 @_register_fmt("client_skill_select")
 @_register_fmt("server_skill_declare")
@@ -481,6 +523,9 @@ class RkppAnalyzer:
         self.key_hits = 0
         self.decoded_rows = 0
         self.flows: dict[tuple[str, int, str, int], FlowState] = {}
+        self.business_frames_seen = 0
+        self.parsed_business_records = 0
+        self.failed_business_records = 0
         # 错误跟踪
         self._consecutive_errors = 0
         self._total_errors = 0
@@ -579,8 +624,12 @@ class RkppAnalyzer:
         row = self._build_base_row(flow, be21, packet, frame_no)
 
         if be21.cmd != 0x4013:
-            row["decrypt_status"] = "not_4013"
-            return row, None
+            parsed_info = self._parse_control(row, be21, packet, frame_no)
+            if parsed_info is None:
+                row["decrypt_status"] = "not_4013"
+                return row, None
+            return row, parsed_info
+        self.business_frames_seen += 1
         if flow.key is None:
             row["decrypt_status"] = "no_key"
             return row, None
@@ -602,6 +651,7 @@ class RkppAnalyzer:
             if parsed_info is None:
                 self._record_error(f"parse_unparsed:{row.get('decrypt_status')}", be21.seq)
                 return row, None
+            self.parsed_business_records += 1
             self._consecutive_errors = 0  # 成功则重置连续错误计数
             return row, parsed_info
         except Exception as exc:
@@ -611,6 +661,7 @@ class RkppAnalyzer:
 
     def _record_error(self, error_msg: str, seq: int) -> None:
         """记录错误并在连续失败时告警。"""
+        self.failed_business_records += 1
         self._consecutive_errors += 1
         self._total_errors += 1
         logger.warning("Packet seq=%s error: %s (consecutive=%d total=%d)",
@@ -630,12 +681,15 @@ class RkppAnalyzer:
             "server_ip": flow.server_ip, "server_port": flow.server_port,
             "direction": be21.direction, "stream_offset": be21.stream_offset,
             "seq": be21.seq, "cmd": be21.cmd, "cmd_hex": f"0x{be21.cmd:04X}",
+            "tgcp_cmd_name": proto.tgcp_command_name(be21.cmd),
             "hdr_len": be21.hdr_len, "body_len": be21.body_len,
             "header_extra_hex": be21.header_extra.hex(), "body_hex": be21.body.hex(),
             "key_hex": flow.key.hex() if flow.key else "",
             "key_ascii": printable_ascii(flow.key) if flow.key else "",
             **{k: "" for k in (
                 "decrypt_status", "iv_hex", "cipher_hex", "decrypted_body_hex",
+                "transport_kind", "transport_layout", "transport_seq", "record_len",
+                "session_id_hex", "sub_id_hex",
                 "protocol_direction", "opcode", "opcode_hex", "raw_opcode", "raw_opcode_hex",
                 "opcode_normalized", "opcode_name", "opcode_desc",
                 "subtype", "magic_hex",
@@ -644,6 +698,57 @@ class RkppAnalyzer:
                 "decoded_json", "record_json", "root_json",
             )},
         }
+
+    def _parse_control(
+        self,
+        row: dict[str, Any],
+        be21: Be21Packet,
+        packet,
+        frame_no: int | None,
+    ) -> dict[str, Any] | None:
+        pkt_dict = {
+            "cmd": be21.cmd,
+            "direction": be21.direction,
+            "seq": be21.seq,
+            "body_len": be21.body_len,
+            "header_extra_hex": be21.header_extra.hex(),
+            "body_hex": be21.body.hex(),
+            "first_frame": frame_no,
+            "first_time": float(packet.time) if hasattr(packet, "time") else None,
+        }
+        record = proto.parse_tgcp_control_packet(pkt_dict)
+        if record is None:
+            return None
+
+        row.update({
+            "decrypt_status": "control",
+            "transport_kind": record.get("transport_kind", ""),
+            "transport_layout": record.get("transport_layout", ""),
+            "protocol_direction": record.get("direction", ""),
+            "tgcp_cmd_name": record.get("tgcp_command_name", row.get("tgcp_cmd_name", "")),
+        })
+
+        summary = {
+            "cmd": record.get("cmd"),
+            "cmd_hex": record.get("cmd_hex"),
+            "cmd_name": record.get("tgcp_command_name"),
+            "body_len": record.get("body_len"),
+            "session_key_hex": record.get("session_key_hex"),
+            "session_key_ascii": record.get("session_key_ascii"),
+        }
+        sstop = record.get("sstop")
+        if isinstance(sstop, dict):
+            summary["sstop_code"] = sstop.get("code")
+            summary["sstop_code_name"] = sstop.get("code_name")
+
+        self._set_summary_fields(
+            row,
+            summary_kind="tgcp_control",
+            summary_obj=summary,
+            record=record,
+            root_json="",
+        )
+        return {"record": record, "inner": None, "summary_kind": "tgcp_control", "summary_obj": summary}
 
     def _parse_decrypted(self, row: dict[str, Any], flow: FlowState, be21: Be21Packet,
                          packet, frame_no: int | None, plain: bytes) -> dict[str, Any] | None:
@@ -659,28 +764,44 @@ class RkppAnalyzer:
             row["decrypt_status"] = "ok_unparsed"
             return None
 
-        row.update({
-            "protocol_direction": record.get("direction", ""),
-            "opcode": record.get("opcode", ""),
-            "opcode_hex": record.get("opcode_hex", ""),
-            "raw_opcode": record.get("raw_opcode", ""),
-            "raw_opcode_hex": record.get("raw_opcode_hex", ""),
-            "opcode_normalized": record.get("opcode_normalized", ""),
-            "subtype": record.get("subtype", ""),
-            "magic_hex": record.get("magic_hex", ""),
-            "req_seq": record.get("req_seq", ""),
-            "payload_len": record.get("payload_len", ""),
-            "payload_trailer_len": record.get("payload_trailer_len", ""),
-            "root_clean": record.get("root", {}).get("clean", ""),
-        })
+        self._update_row_from_record(row, record)
 
         # schema-driven 解码（Mode 2 增强）
+        self._update_opcode_metadata(row, record)
+        decoded_payload, decoded_available = self._decode_schema_payload(record, be21.seq)
+        decoded_str = _json_text(decoded_payload) if decoded_available else ""
+        row["decoded_json"] = decoded_str
+
+        inner = None
+        if record.get("opcode") == 0x0414:
+            inner = proto.extract_inner_message(record["root"])
+            if inner:
+                row["inner_message_id"] = inner.get("message_id", "")
+
+        sk, so = self._summarize(record, inner)
+        # root_json: 优先使用 schema 翻译（带字段名），fallback 到原始 field number
+        public_root = _public_json(record.get("root"))
+        root_json_str = decoded_str or _json_text(public_root)
+        self._set_summary_fields(
+            row,
+            summary_kind=sk,
+            summary_obj=so,
+            record=record,
+            root_json=root_json_str,
+        )
+        return {"record": record, "inner": inner, "summary_kind": sk, "summary_obj": so}
+
+    def _update_row_from_record(self, row: dict[str, Any], record: dict[str, Any]) -> None:
+        for row_key, path in _RECORD_ROW_FIELD_MAP:
+            row[row_key] = _nested_get(record, path)
+
+    def _update_opcode_metadata(self, row: dict[str, Any], record: dict[str, Any]) -> None:
         op = record.get("opcode")
         op_info = analysis.lookup_opcode(op) if op else {}
         row["opcode_name"] = op_info.get("name", "")
         row["opcode_desc"] = op_info.get("desc_cn", "")
 
-        # schema decode: 用于 root_json 和 decoded_json
+    def _decode_schema_payload(self, record: dict[str, Any], seq: int) -> tuple[Any, bool]:
         decoded_payload = None
         decoded_available = False
         try:
@@ -692,31 +813,27 @@ class RkppAnalyzer:
                 record["_message_name"] = schema_result.get("message_name", "")
         except Exception:
             logger.debug("schema decode failed for opcode=%s seq=%s",
-                         record.get("opcode_hex"), be21.seq, exc_info=True)
-        decoded_str = json.dumps(decoded_payload, ensure_ascii=False) if decoded_available else ""
-        row["decoded_json"] = decoded_str
+                         record.get("opcode_hex"), seq, exc_info=True)
         record["_decoded"] = decoded_payload if decoded_available else {}
         record["_schema_decoded"] = decoded_available
+        return decoded_payload, decoded_available
 
-        inner = None
-        if record.get("opcode") == 0x0414:
-            inner = proto.extract_inner_message(record["root"])
-            if inner:
-                row["inner_message_id"] = inner.get("message_id", "")
-
-        sk, so = self._summarize(record, inner)
-        # root_json: 优先使用 schema 翻译（带字段名），fallback 到原始 field number
-        public_record = _public_json(dict(record))
-        public_root = _public_json(record.get("root"))
-        root_json_str = decoded_str or json.dumps(public_root, ensure_ascii=False)
+    def _set_summary_fields(
+        self,
+        row: dict[str, Any],
+        *,
+        summary_kind: str,
+        summary_obj: dict[str, Any],
+        record: dict[str, Any],
+        root_json: str,
+    ) -> None:
         row.update({
-            "summary_kind": sk,
-            "summary_text": self._fmt_text(sk, so),
-            "summary_json": json.dumps(so, ensure_ascii=False),
-            "record_json": json.dumps(public_record, ensure_ascii=False),
-            "root_json": root_json_str,
+            "summary_kind": summary_kind,
+            "summary_text": self._fmt_text(summary_kind, summary_obj),
+            "summary_json": _json_text(summary_obj),
+            "record_json": _json_text(_public_json(record)),
+            "root_json": root_json,
         })
-        return {"record": record, "inner": inner, "summary_kind": sk, "summary_obj": so}
 
     # ------------------------------------------------------------------
     # opcode dispatch（注册表驱动）

@@ -20,9 +20,12 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_DIR = SCRIPT_DIR / "Data"
@@ -102,8 +105,12 @@ def _build_id_name_map(rows: list[dict[str, str]], *, id_field: str) -> dict[int
 def _read_json_dict(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
-    with path.open("r", encoding="utf-8-sig") as fh:
-        data = json.load(fh)
+    try:
+        with path.open("r", encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        logger.warning("Failed to load JSON data bundle %s: %s", path, exc)
+        return {}
     return data if isinstance(data, dict) else {}
 
 
@@ -131,6 +138,8 @@ def _name_map_from_meta(meta: dict[int, dict[str, Any]]) -> dict[int, str]:
 _json_cache: dict[str, Any] | None = None
 _maps_cache: dict[str, dict[int, str]] | None = None
 _lock = threading.RLock()
+
+_MetaNormalizer = Callable[[int | None], int | None]
 
 
 def _load_json_bundle() -> dict[str, Any]:
@@ -189,95 +198,110 @@ def get_maps() -> dict[str, dict[int, str]]:
         return _maps_cache
 
 
-def get_attr_meta(attr_id: int | None) -> dict[str, Any] | None:
-    if attr_id is None:
+def _normalize_lookup_value(value: int | None, *, normalizer: _MetaNormalizer | None = None) -> int | None:
+    if value is None:
         return None
-    return get_bundle().get("attr_meta", {}).get(int(attr_id))
+    normalized = normalizer(value) if normalizer else value
+    if normalized is None:
+        return None
+    return int(normalized)
+
+
+def _get_bundle_meta(
+    *bundle_keys: str,
+    value: int | None,
+    normalizer: _MetaNormalizer | None = None,
+) -> dict[str, Any] | None:
+    lookup_key = _normalize_lookup_value(value, normalizer=normalizer)
+    if lookup_key is None:
+        return None
+    bundle = get_bundle()
+    for bundle_key in bundle_keys:
+        entry = bundle.get(bundle_key, {}).get(lookup_key)
+        if isinstance(entry, dict):
+            return entry
+    return None
+
+
+def _get_meta_name(meta: dict[str, Any] | None) -> str | None:
+    if meta and isinstance(meta.get("name"), str):
+        return meta["name"]
+    return None
+
+
+def _get_name_from_meta_or_map(
+    *bundle_keys: str,
+    value: int | None,
+    map_name: str | None = None,
+    normalizer: _MetaNormalizer | None = None,
+) -> str | None:
+    meta = _get_bundle_meta(*bundle_keys, value=value, normalizer=normalizer)
+    name = _get_meta_name(meta)
+    if name:
+        return name
+    if map_name is None:
+        return None
+    lookup_key = _normalize_lookup_value(value, normalizer=normalizer)
+    if lookup_key is None:
+        return None
+    return get_maps()[map_name].get(lookup_key)
+
+
+def get_attr_meta(attr_id: int | None) -> dict[str, Any] | None:
+    return _get_bundle_meta("attr_meta", value=attr_id)
 
 
 def get_attr_name(attr_id: int | None) -> str | None:
-    if attr_id is None:
-        return None
-    meta = get_attr_meta(attr_id)
-    if meta and isinstance(meta.get("name"), str):
-        return meta["name"]
-    return get_maps()["attr"].get(int(attr_id))
+    return _get_name_from_meta_or_map("attr_meta", value=attr_id, map_name="attr")
 
 
 def get_skill_meta(skill_id: int | None) -> dict[str, Any] | None:
-    normalized = _normalize_skill_id(skill_id)
-    if normalized is None:
-        return None
-    return get_bundle().get("skill_meta", {}).get(normalized)
+    return _get_bundle_meta("skill_meta", value=skill_id, normalizer=_normalize_skill_id)
 
 
 def get_skill_name(skill_id: int | None) -> str | None:
-    normalized = _normalize_skill_id(skill_id)
-    if normalized is None:
-        return None
-    meta = get_skill_meta(normalized)
-    if meta and isinstance(meta.get("name"), str):
-        return meta["name"]
-    return get_maps()["skill"].get(normalized)
+    return _get_name_from_meta_or_map(
+        "skill_meta",
+        value=skill_id,
+        map_name="skill",
+        normalizer=_normalize_skill_id,
+    )
 
 
 def get_buff_meta(buff_id: int | None) -> dict[str, Any] | None:
-    if buff_id is None:
-        return None
-    return get_bundle().get("buff_meta", {}).get(int(buff_id))
+    return _get_bundle_meta("buff_meta", value=buff_id)
 
 
 def get_buffbase_meta(buffbase_id: int | None) -> dict[str, Any] | None:
-    if buffbase_id is None:
-        return None
-    return get_bundle().get("buffbase_meta", {}).get(int(buffbase_id))
+    return _get_bundle_meta("buffbase_meta", value=buffbase_id)
 
 
 def get_pet_meta(pet_id: int | None) -> dict[str, Any] | None:
-    if pet_id is None:
-        return None
-    bundle = get_bundle()
-    pid = int(pet_id)
-    return bundle.get("pet_meta", {}).get(pid) or bundle.get("monster_meta", {}).get(pid)
+    return _get_bundle_meta("pet_meta", "monster_meta", value=pet_id)
 
 
 def get_pet_name(pet_id: int | None) -> str | None:
-    if pet_id is None:
-        return None
-    meta = get_pet_meta(pet_id)
-    if meta and isinstance(meta.get("name"), str):
-        return meta["name"]
-    return get_maps()["pet"].get(int(pet_id))
+    return _get_name_from_meta_or_map("pet_meta", "monster_meta", value=pet_id, map_name="pet")
 
 
 def get_monster_meta(monster_id: int | None) -> dict[str, Any] | None:
-    if monster_id is None:
-        return None
-    return get_bundle().get("monster_meta", {}).get(int(monster_id))
+    return _get_bundle_meta("monster_meta", value=monster_id)
 
 
 def get_pet_skill_meta(base_id: int | None) -> dict[str, Any] | None:
-    if base_id is None:
-        return None
-    return get_bundle().get("pet_skill_meta", {}).get(int(base_id))
+    return _get_bundle_meta("pet_skill_meta", value=base_id)
 
 
 def get_monster_skillbank_meta(bank_id: int | None) -> dict[str, Any] | None:
-    if bank_id is None:
-        return None
-    return get_bundle().get("monster_skillbank_meta", {}).get(int(bank_id))
+    return _get_bundle_meta("monster_skillbank_meta", value=bank_id)
 
 
 def get_special_move_meta(move_id: int | None) -> dict[str, Any] | None:
-    if move_id is None:
-        return None
-    return get_bundle().get("special_move_meta", {}).get(int(move_id))
+    return _get_bundle_meta("special_move_meta", value=move_id)
 
 
 def get_opcode_pb_meta(opcode: int | None) -> dict[str, Any] | None:
-    if opcode is None:
-        return None
-    return get_bundle().get("opcode_pb_meta", {}).get(int(opcode))
+    return _get_bundle_meta("opcode_pb_meta", value=opcode)
 
 
 def get_pb_message_meta(name: str | None) -> dict[str, Any] | None:

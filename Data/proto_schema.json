@@ -5624,6 +5624,68 @@
         }
       }
     },
+    "BattleBloodPetSkill.SkillPkInfo": {
+      "meta": {
+        "parent": "BattleBloodPetSkill",
+        "opcode": "-"
+      },
+      "fields": {
+        "1": {
+          "name": "skill_id",
+          "type": "uint32",
+          "wire": 0,
+          "desc": "skillID"
+        },
+        "2": {
+          "name": "attack_pet_id",
+          "type": "uint32",
+          "wire": 0,
+          "desc": "attack pet ID"
+        },
+        "3": {
+          "name": "hide",
+          "type": "bool",
+          "wire": 0,
+          "desc": "hide"
+        },
+        "4": {
+          "name": "items",
+          "type": "BattleOpRecord",
+          "wire": 2,
+          "desc": "items",
+          "repeated": true,
+          "message": true
+        },
+        "5": {
+          "name": "simple_pets",
+          "type": "CliSimpleBattlePet",
+          "wire": 2,
+          "desc": "simple pets",
+          "repeated": true,
+          "message": true
+        }
+      }
+    },
+    "BattleBloodPetSkill.SkillInfo": {
+      "meta": {
+        "parent": "BattleBloodPetSkill",
+        "opcode": "-"
+      },
+      "fields": {
+        "1": {
+          "name": "skill_id",
+          "type": "uint32",
+          "wire": 0,
+          "desc": "skillID"
+        },
+        "2": {
+          "name": "hide",
+          "type": "bool",
+          "wire": 0,
+          "desc": "hide"
+        }
+      }
+    },
     "BattlePetEscape": {
       "meta": {
         "parent": "-",

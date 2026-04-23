@@ -169,15 +169,45 @@ def build_client_move_rows(
     return rows
 
 
+class _BufferedCsvWriter:
+    def __init__(self, csv_path: Path, fieldnames: list[str]) -> None:
+        self.csv_path = csv_path
+        self._fieldnames = fieldnames
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        self._fp = csv_path.open("w", encoding="utf-8-sig", newline="")
+        self._writer = csv.DictWriter(self._fp, fieldnames=self._fieldnames)
+        self._writer.writeheader()
+        self._fp.flush()
+        self._rows_since_flush = 0
+
+    def write_row(self, row: dict[str, Any]) -> None:
+        self._writer.writerow({field: row.get(field, "") for field in self._fieldnames})
+        self._rows_since_flush += 1
+        if self._rows_since_flush >= _FLUSH_INTERVAL:
+            self.flush()
+
+    def flush(self) -> None:
+        if self._fp and not self._fp.closed:
+            self._fp.flush()
+        self._rows_since_flush = 0
+
+    def close(self) -> None:
+        if self._fp and not self._fp.closed:
+            self.flush()
+            self._fp.close()
+
+
 class CsvSink:
     FIELDS: list[str] = [
         "captured_at", "frame_no", "packet_time",
         "flow_id", "client_ip", "client_port", "server_ip", "server_port",
         "direction", "stream_offset", "seq",
-        "cmd", "cmd_hex", "hdr_len", "body_len",
+        "cmd", "cmd_hex", "tgcp_cmd_name", "hdr_len", "body_len",
         "header_extra_hex", "body_hex",
         "key_hex", "key_ascii",
         "decrypt_status", "iv_hex", "cipher_hex", "decrypted_body_hex",
+        "transport_kind", "transport_layout", "transport_seq", "record_len",
+        "session_id_hex", "sub_id_hex",
         "protocol_direction", "opcode", "opcode_hex", "raw_opcode", "raw_opcode_hex", "opcode_normalized",
         "opcode_name", "opcode_desc", "subtype",
         "magic_hex", "req_seq", "payload_len", "payload_trailer_len", "root_clean",
@@ -190,40 +220,23 @@ class CsvSink:
     def __init__(self, csv_path: Path) -> None:
         self.csv_path = csv_path
         self.opcode_csv_path = csv_path.with_name("opencode_summary.csv")
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
-        self._fp = csv_path.open("w", encoding="utf-8-sig", newline="")
-        self._writer = csv.DictWriter(self._fp, fieldnames=self.FIELDS)
-        self._writer.writeheader()
-        self._opcode_fp = self.opcode_csv_path.open("w", encoding="utf-8-sig", newline="")
-        self._opcode_writer = csv.DictWriter(self._opcode_fp, fieldnames=self.OPCODE_FIELDS)
-        self._opcode_writer.writeheader()
-        self._fp.flush()
-        self._opcode_fp.flush()
-        self._rows_since_flush = 0
+        self._main_writer = _BufferedCsvWriter(csv_path, self.FIELDS)
+        self._opcode_writer = _BufferedCsvWriter(self.opcode_csv_path, self.OPCODE_FIELDS)
 
     def write_row(self, row: dict[str, Any]) -> None:
-        self._writer.writerow({f: row.get(f, "") for f in self.FIELDS})
+        self._main_writer.write_row(row)
         opcode_row = self._build_opcode_row(row)
         if opcode_row is not None:
-            self._opcode_writer.writerow(opcode_row)
-        self._rows_since_flush += 1
-        if self._rows_since_flush >= _FLUSH_INTERVAL:
-            self._fp.flush()
-            self._opcode_fp.flush()
-            self._rows_since_flush = 0
+            self._opcode_writer.write_row(opcode_row)
 
     def _build_opcode_row(self, row: dict[str, Any]) -> dict[str, Any] | None:
         return build_opcode_summary(row)
 
     def close(self) -> None:
         try:
-            if self._fp and not self._fp.closed:
-                self._fp.flush()
-                self._fp.close()
+            self._main_writer.close()
         finally:
-            if self._opcode_fp and not self._opcode_fp.closed:
-                self._opcode_fp.flush()
-                self._opcode_fp.close()
+            self._opcode_writer.close()
 
     def __enter__(self) -> CsvSink:
         return self
@@ -251,25 +264,14 @@ class MoveCsvSink:
 
     def __init__(self, csv_path: Path) -> None:
         self.csv_path = csv_path
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
-        self._fp = csv_path.open("w", encoding="utf-8-sig", newline="")
-        self._writer = csv.DictWriter(self._fp, fieldnames=self.FIELDS)
-        self._writer.writeheader()
-        self._fp.flush()
-        self._rows_since_flush = 0
+        self._writer = _BufferedCsvWriter(csv_path, self.FIELDS)
 
     def handle(self, row_index: int, row: dict[str, Any], parsed_info: dict[str, Any]) -> None:
         for item in build_client_move_rows(row_index, row, parsed_info):
-            self._writer.writerow({f: item.get(f, "") for f in self.FIELDS})
-            self._rows_since_flush += 1
-            if self._rows_since_flush >= _FLUSH_INTERVAL:
-                self._fp.flush()
-                self._rows_since_flush = 0
+            self._writer.write_row(item)
 
     def close(self) -> None:
-        if self._fp and not self._fp.closed:
-            self._fp.flush()
-            self._fp.close()
+        self._writer.close()
 
     def __enter__(self) -> MoveCsvSink:
         return self

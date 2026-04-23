@@ -2,7 +2,7 @@
 
 ## 1. 功能概览
 
-`opencode-server` 模式延续自 Ver1.2；Ver1.3 主要补上项目命名统一、本地离线数据接入，以及 live-decode outer record 修复后的配套说明。
+`opencode-server` 模式延续自旧版本；Ver2.0 主要对应当前仓库中的项目命名统一、本地离线数据接入，以及 live-decode outer record 修复后的配套说明。
 
 该模式适合：
 
@@ -19,7 +19,7 @@
 4. 输出 CSV
 5. 同时通过 HTTP 推送摘要事件
 
-Ver1.3 相对 Ver1.2 的直接影响是：
+Ver2.0 相对旧版本的直接影响是：
 
 - `decoded_packets.csv` 中会多出 `raw_opcode`、`raw_opcode_hex`、`opcode_normalized`、`payload_trailer_len`
 - c2s `0x0001xxxx` 将在 relay / summary 层按低 16 位 opcode 命名
@@ -71,7 +71,7 @@ python .\rkpp_live_tools.py
 [relay] listening url=http://127.0.0.1:8765 endpoints=/health,/latest,/events
 ```
 
-如果默认端口 `8765` 已被本机其他程序占用，Ver1.3 当前会自动顺延尝试后续可用端口，并在日志中输出类似：
+如果默认端口 `8765` 已被本机其他程序占用，Ver2.0 当前会自动顺延尝试后续可用端口，并在日志中输出类似：
 
 ```text
 [relay] requested port 8765 unavailable, fallback port=8766

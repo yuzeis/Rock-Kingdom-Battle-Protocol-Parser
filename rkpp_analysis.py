@@ -657,6 +657,27 @@ def _raw_dump(msg: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _build_decode_result(
+    record: dict[str, Any],
+    info: dict[str, Any],
+    *,
+    schema_found: bool,
+    message_name: str | None,
+    decoded: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "opcode": record.get("opcode"),
+        "opcode_hex": record.get("opcode_hex"),
+        "opcode_info": info,
+        "schema_found": schema_found,
+        "message_name": message_name,
+        "pb_message_name": info.get("pb_message"),
+        "pb_full_name": info.get("pb_full_name"),
+        "pb_proto_file": info.get("pb_proto_file"),
+        "decoded": _enrich_known_id_names(decoded),
+    }
+
+
 # ---------------------------------------------------------------------------
 # 高层 API：完整解码一条 record
 # ---------------------------------------------------------------------------
@@ -679,30 +700,22 @@ def decode_record(record: dict[str, Any]) -> dict[str, Any] | None:
     root = record.get("root")
     special_payload = record.get("special_payload")
     if root is None or msg_name is None:
-        return {
-            "opcode": opcode,
-            "opcode_hex": record.get("opcode_hex"),
-            "opcode_info": info,
-            "schema_found": False,
-            "message_name": msg_name,
-            "pb_message_name": info.get("pb_message"),
-            "pb_full_name": info.get("pb_full_name"),
-            "pb_proto_file": info.get("pb_proto_file"),
-            "decoded": _enrich_known_id_names(_raw_dump(root)) if root else {},
-        }
+        return _build_decode_result(
+            record,
+            info,
+            schema_found=False,
+            message_name=msg_name,
+            decoded=_raw_dump(root) if root else {},
+        )
 
     if isinstance(special_payload, dict):
-        return {
-            "opcode": opcode,
-            "opcode_hex": record.get("opcode_hex"),
-            "opcode_info": info,
-            "schema_found": False,
-            "message_name": msg_name,
-            "pb_message_name": info.get("pb_message"),
-            "pb_full_name": info.get("pb_full_name"),
-            "pb_proto_file": info.get("pb_proto_file"),
-            "decoded": _enrich_known_id_names(dict(special_payload)),
-        }
+        return _build_decode_result(
+            record,
+            info,
+            schema_found=False,
+            message_name=msg_name,
+            decoded=dict(special_payload),
+        )
 
     _, schema = _ensure_loaded()
     msgs = schema.get("messages", {})
@@ -713,16 +726,10 @@ def decode_record(record: dict[str, Any]) -> dict[str, Any] | None:
         decoded = decode_by_schema(root, msg_name)
     else:
         decoded = _raw_dump(root) if root else {}
-    decoded = _enrich_known_id_names(decoded)
-
-    return {
-        "opcode": opcode,
-        "opcode_hex": record.get("opcode_hex"),
-        "opcode_info": info,
-        "schema_found": msg_name in msgs,
-        "message_name": msg_name,
-        "pb_message_name": info.get("pb_message"),
-        "pb_full_name": info.get("pb_full_name"),
-        "pb_proto_file": info.get("pb_proto_file"),
-        "decoded": decoded,
-    }
+    return _build_decode_result(
+        record,
+        info,
+        schema_found=msg_name in msgs,
+        message_name=msg_name,
+        decoded=decoded,
+    )

@@ -2,6 +2,10 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.pytest_cache/
+.agents/
+analysis/
+artifacts/
 .venv/
 venv/
 env/

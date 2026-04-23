@@ -231,22 +231,13 @@ class BattleConsoleReporter:
             self._emit(ri, f"  战后宠物: gid={p.get('pet_gid')} "
                           f"HP={p.get('remain_hp')}/{p.get('battle_max_hp')} "
                           f"能量={p.get('remain_energy')}")
-        # 重置战斗状态
-        self._phase = BattlePhase.WAITING_PAIR
-        self.opening_pair = None
-        self.opening_1316 = None
-        self.opening_131a = None
-        self.active_friendly_slot = None
-        self.active_enemy_slot    = None
+        self._reset_battle_state()
 
     def _on_force_finish(self, ri: int, record: dict[str, Any], obj: dict[str, Any]) -> None:
         """0x132D BattleForceFinishNotify - 强制结束。"""
         d = obj.get("detail") or {}
         self._emit(ri, f"★ 战斗强制结束: reason={d.get('reason')}")
-        self._phase = BattlePhase.WAITING_PAIR
-        self.opening_pair = None
-        self.opening_1316 = None
-        self.opening_131a = None
+        self._reset_battle_state()
 
     def _on_ai_skill(self, ri: int, record: dict[str, Any], obj: dict[str, Any]) -> None:
         """0x13F6 AiSelectSkillNotify - AI 选技能提示。"""
@@ -411,6 +402,14 @@ class BattleConsoleReporter:
     def _slot_key(self, w: dict[str, Any]) -> int:
         slot = w.get("slot")
         return int(slot) if slot is not None else -1
+
+    def _reset_battle_state(self) -> None:
+        self._phase = BattlePhase.WAITING_PAIR
+        self.opening_pair = None
+        self.opening_1316 = None
+        self.opening_131a = None
+        self.active_friendly_slot = None
+        self.active_enemy_slot = None
 
     def _match_opening_active(self, wrappers: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         pair = self.opening_pair or {}

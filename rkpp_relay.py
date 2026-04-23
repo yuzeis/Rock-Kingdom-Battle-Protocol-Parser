@@ -121,21 +121,15 @@ class OpcodeRelayServer:
         summary = build_opcode_summary(row, parse_content=True)
         if summary is None:
             return None
-        name = str(row.get("opcode_name") or "").strip()
-        return {
-            "row_index": row_index,
-            "captured_at": row.get("captured_at"),
-            "flow_id": row.get("flow_id"),
-            "direction": row.get("protocol_direction") or row.get("direction"),
-            "seq": row.get("seq"),
+        event = self._base_event_fields(row_index, row)
+        event.update({
             "opencode": summary["opencode"],
-            "opcode": row.get("opcode"),
-            "opcode_name": name,
             "meaning": summary["meaning"],
             "summary_kind": parsed_info.get("summary_kind") or row.get("summary_kind"),
             "summary_text": row.get("summary_text"),
             "content": summary["content"] or {},
-        }
+        })
+        return event
 
     def _build_move_events(
         self,
@@ -145,16 +139,10 @@ class OpcodeRelayServer:
     ) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
         for item in build_client_move_rows(row_index, row, parsed_info):
-            events.append({
-                "row_index": item.get("row_index"),
+            event = self._base_event_fields(int(item.get("row_index") or row_index), item)
+            event.update({
                 "act_index": item.get("act_index"),
-                "captured_at": item.get("captured_at"),
-                "flow_id": item.get("flow_id"),
-                "direction": item.get("direction"),
-                "seq": item.get("seq"),
                 "opencode": item.get("opcode_hex") or item.get("opcode"),
-                "opcode": item.get("opcode"),
-                "opcode_name": item.get("opcode_name"),
                 "inner_message_id": item.get("inner_message_id"),
                 "summary_kind": "client_move",
                 "summary_text": item.get("summary_text"),
@@ -162,31 +150,11 @@ class OpcodeRelayServer:
                 "operator_obj_id": item.get("operator_obj_id"),
                 "actor_id": item.get("actor_id"),
                 "time_stamp": item.get("time_stamp"),
-                "to_pos": {
-                    "x": item.get("to_pos_x"),
-                    "y": item.get("to_pos_y"),
-                    "z": item.get("to_pos_z"),
-                },
-                "to_rot": {
-                    "x": item.get("to_rot_x"),
-                    "y": item.get("to_rot_y"),
-                    "z": item.get("to_rot_z"),
-                },
-                "speed": {
-                    "x": item.get("speed_x"),
-                    "y": item.get("speed_y"),
-                    "z": item.get("speed_z"),
-                },
-                "acceleration": {
-                    "x": item.get("acceleration_x"),
-                    "y": item.get("acceleration_y"),
-                    "z": item.get("acceleration_z"),
-                },
-                "ctrl_rot": {
-                    "x": item.get("ctrl_rot_x"),
-                    "y": item.get("ctrl_rot_y"),
-                    "z": item.get("ctrl_rot_z"),
-                },
+                "to_pos": self._vector_payload(item, "to_pos"),
+                "to_rot": self._vector_payload(item, "to_rot"),
+                "speed": self._vector_payload(item, "speed"),
+                "acceleration": self._vector_payload(item, "acceleration"),
+                "ctrl_rot": self._vector_payload(item, "ctrl_rot"),
                 "move_mode": item.get("move_mode"),
                 "custom_mode": item.get("custom_mode"),
                 "stop_move": item.get("stop_move"),
@@ -195,7 +163,26 @@ class OpcodeRelayServer:
                 "mate_move_mode": item.get("mate_move_mode"),
                 "content": item.get("content") or {},
             })
+            events.append(event)
         return events
+
+    def _base_event_fields(self, row_index: int, payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "row_index": row_index,
+            "captured_at": payload.get("captured_at"),
+            "flow_id": payload.get("flow_id"),
+            "direction": payload.get("protocol_direction") or payload.get("direction"),
+            "seq": payload.get("seq"),
+            "opcode": payload.get("opcode"),
+            "opcode_name": str(payload.get("opcode_name") or "").strip(),
+        }
+
+    def _vector_payload(self, item: dict[str, Any], prefix: str) -> dict[str, Any]:
+        return {
+            "x": item.get(f"{prefix}_x"),
+            "y": item.get(f"{prefix}_y"),
+            "z": item.get(f"{prefix}_z"),
+        }
 
     def _make_server_with_fallback(self) -> ThreadingHTTPServer:
         last_exc: OSError | None = None
@@ -227,7 +214,11 @@ class OpcodeRelayServer:
                     return
                 if parsed.path == "/latest":
                     qs = parse_qs(parsed.query)
-                    limit = int(qs.get("limit", ["50"])[0])
+                    try:
+                        limit = int(qs.get("limit", ["50"])[0])
+                    except ValueError:
+                        self.send_error(400, "invalid limit")
+                        return
                     self._send_json(relay.latest(limit))
                     return
                 if parsed.path == "/events":

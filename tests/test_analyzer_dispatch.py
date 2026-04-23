@@ -68,6 +68,17 @@ class AnalyzerDispatchTests(unittest.TestCase):
 
         self.assertIn("acts[0]=client_move", text)
 
+    def test_tgcp_control_text_inlines_command_name(self) -> None:
+        text = analyzer.RkppAnalyzer._fmt_text(object(), "tgcp_control", {
+            "cmd_hex": "0x1002",
+            "cmd_name": "ACK",
+            "session_key_ascii": "0123456789ABCDEF",
+        })
+
+        self.assertIn("0x1002", text)
+        self.assertIn("ACK", text)
+        self.assertIn("0123456789ABCDEF", text)
+
     def test_reporter_handles_schema_decoded_simple_opcode(self) -> None:
         logger = DummyLogger()
         reporter = BattleConsoleReporter(logger=logger)  # type: ignore[arg-type]

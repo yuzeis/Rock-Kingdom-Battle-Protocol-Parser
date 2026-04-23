@@ -52,7 +52,10 @@ def parse_key_text(text: str) -> bytes:
     raw = text.strip()
     hex_cand = "".join(c for c in raw if c in "0123456789abcdefABCDEF")
     if len(raw) == 16:
-        key = raw.encode("ascii")
+        try:
+            key = raw.encode("ascii")
+        except UnicodeEncodeError as exc:
+            raise ValueError("key 必须是 16 字节 ASCII 或 32 位 hex") from exc
     elif len(hex_cand) == 32:
         key = bytes.fromhex(hex_cand)
     else:
@@ -63,6 +66,12 @@ def parse_key_text(text: str) -> bytes:
 
 
 def load_key_from_file(path: str | Path) -> bytes | None:
+    def _try_parse(value: str) -> bytes | None:
+        try:
+            return parse_key_text(value)
+        except ValueError:
+            return None
+
     path = Path(path)
     if not path.is_file():
         return None
@@ -71,19 +80,20 @@ def load_key_from_file(path: str | Path) -> bytes | None:
         return None
     first = text.splitlines()[0].strip()
     if "=" not in first:
-        try:
-            return parse_key_text(first)
-        except ValueError:
-            pass
+        return _try_parse(first)
     for line in text.splitlines():
         if line.startswith("key_hex="):
             value = line.split("=", 1)[1].strip()
             if value:
-                return parse_key_text(value)
+                key = _try_parse(value)
+                if key is not None:
+                    return key
         if line.startswith("key_ascii="):
             value = line.split("=", 1)[1].strip()
             if value and value != "<non-ascii>":
-                return parse_key_text(value)
+                key = _try_parse(value)
+                if key is not None:
+                    return key
     return None
 
 

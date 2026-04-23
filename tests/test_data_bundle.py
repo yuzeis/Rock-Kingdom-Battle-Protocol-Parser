@@ -50,6 +50,41 @@ class DataBundleTests(unittest.TestCase):
         self.assertEqual(info.get("pb_message"), "ZoneBattlePerformStartNotify")
         self.assertTrue(info.get("pb_proto_file"))
 
+    def test_battle_blood_pet_skill_nested_schema_is_available(self) -> None:
+        raw = {
+            "fields": [
+                {
+                    "field": 1,
+                    "wire": 2,
+                    "sub": {
+                        "fields": [
+                            {"field": 1, "wire": 0, "value": 7000010},
+                            {"field": 2, "wire": 0, "value": 401},
+                            {"field": 3, "wire": 0, "value": 1},
+                        ],
+                    },
+                },
+                {
+                    "field": 3,
+                    "wire": 2,
+                    "sub": {
+                        "fields": [
+                            {"field": 1, "wire": 0, "value": 7000030},
+                            {"field": 2, "wire": 0, "value": 0},
+                        ],
+                    },
+                },
+            ],
+        }
+
+        decoded = analysis.decode_by_schema(raw, "BattleBloodPetSkill")
+
+        self.assertEqual(decoded["pkinfo"]["skill_id"], 7000010)
+        self.assertEqual(decoded["pkinfo"]["attack_pet_id"], 401)
+        self.assertTrue(decoded["pkinfo"]["hide"])
+        self.assertEqual(decoded["skills"][0]["skill_id"], 7000030)
+        self.assertFalse(decoded["skills"][0]["hide"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -32,12 +32,13 @@ from scapy.all import AsyncSniffer, PcapWriter  # type: ignore
 from rkpp_analyzer import RkppAnalyzer
 from rkpp_io import (CsvSink, MoveCsvSink, SessionLogger, ensure_output_dir,
                       iter_offline_packets, prompt_menu, prompt_server_mode, prompt_text)
-from rkpp_network import list_ifaces, load_key_from_file, packet_has_target_port, parse_key_text, printable_ascii
+from rkpp_network import list_ifaces, load_key_from_file, packet_has_target_port, parse_key_text
 from rkpp_relay import OpcodeRelayServer
 from rkpp_reporter import BattleConsoleReporter
 
 DEFAULT_PORT = 8195
 SCRIPT_DIR   = Path(__file__).resolve().parent
+_BAD_KEY_EXIT_CODE = 2
 
 # 子命令配置：command -> (prefix, needs_csv, needs_reporter, stop_after_key)
 _COMMAND_CONFIG = {
@@ -45,6 +46,13 @@ _COMMAND_CONFIG = {
     "live-decode":    ("rkpp_live_decode",      True,  False, False),
     "battle-analyze": ("rkpp_battle_analyze",   True,  True,  False),
     "opencode-server":("rkpp_opencode_server",  True,  False, False),
+}
+
+_INTERACTIVE_COMMANDS = {
+    "1": "capture-key",
+    "2": "live-decode",
+    "3": "battle-analyze",
+    "4": "opencode-server",
 }
 
 
@@ -84,6 +92,36 @@ class _MultiListener:
     def handle(self, row_index: int, row: dict, parsed_info: dict) -> None:
         for listener in self.listeners:
             listener.handle(row_index, row, parsed_info)
+
+
+def _close_optional(resource: object | None) -> None:
+    if resource is None:
+        return
+    close = getattr(resource, "close", None)
+    if callable(close):
+        close()
+
+
+def _session_exit_code(
+    command: str,
+    analyzer: RkppAnalyzer,
+    *,
+    preset_key: bytes | None,
+    session_logger: SessionLogger,
+) -> int:
+    if command == "capture-key":
+        return 0 if analyzer.key_hits > 0 else 1
+    if (
+        preset_key is not None
+        and analyzer.business_frames_seen > 0
+        and analyzer.parsed_business_records == 0
+        and analyzer.failed_business_records > 0
+    ):
+        session_logger.log(
+            "[status] provided key produced no parsable business records; treating session as failure"
+        )
+        return _BAD_KEY_EXIT_CODE
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -166,22 +204,16 @@ def run_command(args: argparse.Namespace) -> int:
             f"rows={analyzer.decoded_rows} errors={analyzer._total_errors} "
             f"listener_errors={analyzer.listener_errors}"
         )
-
-        # capture-key 模式：返回 0 表示找到 key，1 表示未找到
-        if stop_after_key:
-            return 0 if analyzer.key_hits > 0 else 1
-        return 0
+        return _session_exit_code(
+            command,
+            analyzer,
+            preset_key=preset_key,
+            session_logger=session_logger,
+        )
 
     finally:
-        if writer:
-            writer.close()
-        if csv_sink:
-            csv_sink.close()
-        if move_csv_sink:
-            move_csv_sink.close()
-        if relay:
-            relay.close()
-        session_logger.close()
+        for resource in (writer, csv_sink, move_csv_sink, relay, session_logger):
+            _close_optional(resource)
 
 
 # ---------------------------------------------------------------------------
@@ -197,8 +229,9 @@ def build_interactive_args() -> argparse.Namespace:
         iface=iface, port=DEFAULT_PORT, out_dir=out_dir,
         pcap_out=None, read_pcap=None, no_bpf=False, list_ifaces=False,
     )
-    if choice == "1":
-        return argparse.Namespace(**vars(base), command="capture-key")
+    command = _INTERACTIVE_COMMANDS[choice]
+    if command == "capture-key":
+        return argparse.Namespace(**vars(base), command=command)
 
     key: str | None = None
     for kp in ([out_dir / "key.txt"] if out_dir else []) + [SCRIPT_DIR / "key.txt"]:
@@ -221,7 +254,7 @@ def build_interactive_args() -> argparse.Namespace:
         server_mode = prompt_server_mode()
     return argparse.Namespace(
         **vars(base),
-        command="battle-analyze" if choice == "3" else ("opencode-server" if choice == "4" else "live-decode"),
+        command=command,
         csv_out=None, key=key,
         server_mode=server_mode, move_csv_out=None,
         relay_host="127.0.0.1", relay_port=8765, relay_history=500,
